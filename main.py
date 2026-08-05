@@ -12,7 +12,7 @@ from pathlib import Path
 import miniflash as flash
 
 
-def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=False, factory="15-to-1", die_dims=None, factories=1, budget_s=600):
+def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=False, factory="15-to-1", die_dims=None, factories=1, budget_s=600, orientation=False):
     """Compile a circuit to the Program IR: parse -> partition -> synthesize -> elaborate.
 
     Partitioning is coarse-first: regions start at whole-circuit granularity
@@ -27,6 +27,7 @@ def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=Fa
     :param die_dims: (width, rows | None) or None for 1-D.
     :param factories: int, magic state factory units.
     :param budget_s: int, processing budget in seconds per region.
+    :param orientation: bool, lay deep cells down when that shortens their layer (1-D only).
     :returns: Program.
     """
     circuit = flash.parse(qasm_path)
@@ -42,7 +43,7 @@ def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=Fa
     rung_of = {id(region): 0 for region in regions}
     while True:
         try:
-            floorplan, cells, channels = flash.synthesize(partitioned, cache_dir=cache_dir, side_ports=side_ports, die_dims=die_dims, budget_s=budget_s)
+            floorplan, cells, channels = flash.synthesize(partitioned, cache_dir=cache_dir, side_ports=side_ports, die_dims=die_dims, budget_s=budget_s, orientation=orientation)
             break
         except RuntimeError as error:
             failed = getattr(error, "region", None)
@@ -71,6 +72,7 @@ def main():
     parser.add_argument("--cache-dir",         default=".miniflash-cache",                               help="cell cache directory")
     parser.add_argument("--max-gates",         type=int, default=16,                                     help="floor of the per-region gate cap")
     parser.add_argument("--side-ports",        action="store_true",                                      help="swap through cell side faces")
+    parser.add_argument("--orientation",       action="store_true",                                      help="lay deep cells down (1-D only)")
     parser.add_argument("--factory",           choices=sorted(flash.FACTORIES), default="15-to-1",       help="magic state factory preset")
     parser.add_argument("--factory-dims",      nargs=3, type=int, metavar=("I", "J", "K"),               help="custom factory footprint/interval (overrides --factory)")
     parser.add_argument("--die-dims",          nargs=2, type=int, metavar=("WIDTH", "ROWS"),             help="die constraint (ROWS 0 = grow on demand)")
@@ -89,6 +91,7 @@ def main():
         die_dims=die_dims,
         factories=arguments.factories,
         budget_s=arguments.budget,
+        orientation=arguments.orientation,
     )
 
     gltf_path = Path(arguments.out)
