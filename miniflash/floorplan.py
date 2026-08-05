@@ -18,46 +18,84 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class Move:
+    """One 1-D channel jog: a qubit relocating between columns on a track level."""
+
+    #: qubit being moved
     qubit: int
+    #: source column
     from_column: int
+    #: destination column
     to_column: int
+    #: track level inside the channel gap (0 = closest to the layer above)
     level: int
+    #: J corridor of the horizontal run (0 or 2; the wire plane sits at 1)
     plane: int
 
 
 @dataclass(frozen=True)
 class SideMove:
+    """A park/unpark move through a cell side face to a lane column."""
+
+    #: qubit being parked or unparked
     qubit: int
+    #: lane column the qubit waits in
     lane_column: int
+    #: K slot of the side-face port (sets the port height on the cell wall)
     slot: int
+    #: J corridor used between the cell face and the lane
     plane: int
 
 
 @dataclass
 class Floorplan:
+    """The symbolic layout contract: every port column, lane, move and track,
+    fixed before any cell is synthesized."""
+
+    #: number of logical qubits
     num_qubits: int
+    #: per layer, width of the cell band in columns
     box_widths: list
+    #: per layer, {qubit: absolute column} of its in-port
     in_port_columns: list
+    #: per layer, {qubit: absolute column} of its out-port
     out_port_columns: list
+    #: per layer, {qubit: column} for qubits parked in a lane (1-D)
     lane_columns: list
+    #: per channel, list[Move] jogs between consecutive layers (1-D)
     moves: list
+    #: per channel, number of jog track levels in the gap
     gap_levels: list = field(default_factory=list)
+    #: per layer, {qubit: SideMove} park moves out through a cell side face
     side_exits: list = field(default_factory=list)
+    #: per layer, {qubit: SideMove} unpark moves back in through a side face
     side_entries: list = field(default_factory=list)
+    #: leftmost column of the magic-state lane (1-D), None without injections
     magic_column: int = None
+    #: (width, rows | None) die constraint, None for unconstrained 1-D
     die_dims: tuple = None
+    #: number of die rows actually used
     rows: int = 0
+    #: per layer, list of (row, column offset, box qubits) cell placements
     placements: list = field(default_factory=list)
+    #: per layer, {qubit: (row, column)} parked slots (die mode)
     parked_slots: list = field(default_factory=list)
+    #: per channel, list[GridMove] 2-D relocations (die mode)
     grid_moves: list = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class GridMove:
+    """A die-mode 2-D relocation between (row, column) slots."""
+
+    #: qubit being moved
     qubit: int
+    #: (row, column) source slot
     src: tuple
+    #: (row, column) destination slot
     dst: tuple
+    #: track level inside the channel gap
     level: int
+    #: route segments, e.g. ("J", corridor_column) for the row change
     path: tuple
 
 
@@ -66,23 +104,28 @@ INJECTION_BANDWIDTH = 2
 
 @dataclass(frozen=True)
 class InjectionPoint:
+    """A placed T injection: which channel it fires in and where its crossbar sits."""
+
+    #: data qubit receiving the T
     qubit: int
+    #: True for ``tdg``
     dagger: bool
+    #: channel (inter-layer gap) the injection fires in
     channel: int
+    #: data-qubit column at that boundary
     column: int
+    #: die row (die mode)
     row: int = 0
+    #: production round within the channel (:data:`INJECTION_BANDWIDTH` per round)
     round: int = 0
+    #: crossbar slot within the round (0 | 1)
     slot: int = 0
+    #: in-gap track level, or -1 for a block injection at the channel floor
     level: int = -1
 
 
-def sequence_moves(raw_moves, scratch_column):
-    """Order channel moves vacate-before-occupy; break permutation cycles via the scratch column.
-
-    :param raw_moves: list of (qubit, from_column, to_column).
-    :param scratch_column: int, spare column for cycle breaking.
-    :returns: ordered move list (cycle members routed through scratch).
-    """
+def _sequence_moves(raw_moves, scratch_column):
+    """Order channel moves vacate-before-occupy; break permutation cycles via the scratch column."""
     num_moves = len(raw_moves)
     vacater_of_column = {from_column: index for index, (_, from_column, _) in enumerate(raw_moves)}
     successor = {}
@@ -121,13 +164,8 @@ def sequence_moves(raw_moves, scratch_column):
     return ordered
 
 
-def column_precedence(ordered_moves, columns_of):
-    """Predecessor sets so moves touching a shared column keep their sequence order.
-
-    :param ordered_moves: moves in sequence order.
-    :param columns_of: callable move -> iterable of columns it touches.
-    :returns: list[set[int]] predecessor indices per move.
-    """
+def _column_precedence(ordered_moves, columns_of):
+    """Predecessor sets so moves touching a shared column keep their sequence order."""
     predecessors = [set() for _ in ordered_moves]
     last_by_column = {}
     for index, move in enumerate(ordered_moves):
@@ -138,15 +176,8 @@ def column_precedence(ordered_moves, columns_of):
     return predecessors
 
 
-def left_edge(ordered_moves, key_of, conflicts, predecessors):
-    """Left-edge greedy level packing under conflict and precedence constraints.
-
-    :param ordered_moves: items to place.
-    :param key_of: callable index -> sort key (left edge).
-    :param conflicts: callable (index, other) -> bool, same-level conflict.
-    :param predecessors: list[set[int]] from :func:`column_precedence`.
-    :returns: list[int] level per item.
-    """
+def _left_edge(ordered_moves, key_of, conflicts, predecessors):
+    """Left-edge greedy level packing under conflict and precedence constraints."""
     levels = [None] * len(ordered_moves)
     unplaced = set(range(len(ordered_moves)))
     level = 0
@@ -164,7 +195,7 @@ def left_edge(ordered_moves, key_of, conflicts, predecessors):
     return levels
 
 
-def wire_only_floorplan(num_qubits, with_magic=False):
+def passthrough_floorplan(num_qubits, with_magic=False):
     """Build a degenerate Floorplan with no cells — straight wires only (pure-T circuits).
 
     :param num_qubits: int.

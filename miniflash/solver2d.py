@@ -5,7 +5,7 @@ homes, cell boxes are admitted row by row, and congestion is relieved by
 eviction and corridor moves. Channel moves generalize to 2-D L/Z grid
 paths, packed per gap level with three-way conflict resolution.
 """
-from .floorplan import Floorplan, GridMove, column_precedence, left_edge, sequence_moves
+from .floorplan import Floorplan, GridMove, _column_precedence, _left_edge, _sequence_moves
 
 
 def _segments(src, dst, corridor):
@@ -50,8 +50,8 @@ def _pack_grid_levels(ordered, static, width):
     def conflicts(index, other):
         return any(_seg_conflict(seg, other_seg) for seg in paths[index] for other_seg in paths[other])
 
-    predecessors = column_precedence(ordered, lambda move: (move[1], move[2]))
-    levels = left_edge(ordered, lambda index: min((seg[3] for seg in paths[index] if seg[0] == "I"), default=0), conflicts, predecessors)
+    predecessors = _column_precedence(ordered, lambda move: (move[1], move[2]))
+    levels = _left_edge(ordered, lambda index: min((seg[3] for seg in paths[index] if seg[0] == "I"), default=0), conflicts, predecessors)
     return [GridMove(qubit=qubit, src=src, dst=dst, level=level, path=path) for (qubit, src, dst), level, path in zip(ordered, levels, paths)]
 
 
@@ -179,7 +179,7 @@ def solve_2d(layers, num_qubits, die_dims, with_magic):
             free = [(row, column) for row in range(rows) for column in range(width) if (row, column) not in occupied]
             scratch_slot = min(free) if free else (rows, 0)
 
-            ordered = sequence_moves(raw, scratch_slot)
+            ordered = _sequence_moves(raw, scratch_slot)
             if len(ordered) > len(raw) and not free:
                 if not can_grow:
                     raise ValueError(f"solve_floorplan: no scratch slot for move cycle in channel {channel} of die {die_dims}")

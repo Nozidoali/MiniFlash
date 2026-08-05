@@ -65,10 +65,10 @@ def _expand_gates(circuit: QuantumCircuit) -> QuantumCircuit:
 
 
 def parse(path) -> QuantumCircuit:
-    """Load and normalize a circuit to the accepted gate set (h/cx/x/s/sdg/t/tdg/measure/barrier).
+    """Load and normalize a circuit to the accepted gate set (``h``/``cx``/``x``/``s``/``sdg``/``t``/``tdg``/``measure``/``barrier``).
 
     :param path: str | Path to a .qasm file.
-    :returns: QuantumCircuit with z/y/cz/swap/id/rz(k*pi/2) expanded.
+    :returns: QuantumCircuit with ``z``/``y``/``cz``/``swap``/``id``/``rz(k*pi/2)`` expanded.
     :raises ValueError: on unsupported gates.
     """
     circuit = _expand_gates(qasm2.load(str(path)))

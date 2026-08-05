@@ -36,30 +36,6 @@ ISCA 2024).
       The pipeline stages — parse to Program IR to glTF — as a small
       public API.
 
-How It Works
-------------
-
-Routing is decided *before* synthesis. A floorplan fixes every port
-column, order and color symbolically first; each cell is then
-synthesized by SAT to match its pre-assigned ports. The wire never
-adapts to the cell; the cell adapts to the wire — so routedness is
-structural, and there is no routing retry loop to fail.
-
-.. code-block:: text
-
-   circuit.qasm
-      │  parse ─ partition          PartitionedCircuit (regions + T events)
-      ▼
-   schedule ─ floorplan             layers, ports, lanes, channel moves — symbolic
-      │
-   synthesize (per cell)            LaSsynth SAT, canonical disk cache
-      │
-   elaborate  →  Program IR         macros / nets / channels
-      │
-   build_layout ─ write_gltf        check → lower → 3-D pipes → glTF
-      ▼
-   layout.gltf
-
 .. toctree::
    :hidden:
    :caption: Getting Started
