@@ -773,7 +773,7 @@ def _build_spec(num_qubits, stabilizers, depth, in_pin_names, out_pin_names, in_
 
 
 def _hard_wall(signum, frame):
-    raise SynthTimeout("synthesize: hard wall — solver attempt exceeded the budget")
+    raise SynthTimeout("synthesize: hard wall — region processing exceeded the budget")
 
 
 def _solve_region(local_gates, num_qubits, in_pin_names, out_pin_names, min_depth=2, max_depth=16, solver=None, in_columns=None, out_columns=None, side_in_slots=None, side_out_slots=None, deadline=None):
@@ -801,11 +801,23 @@ def _solve_region(local_gates, num_qubits, in_pin_names, out_pin_names, min_dept
             if deadline is not None:
                 previous_handler = signal.signal(signal.SIGALRM, _hard_wall)
                 signal.setitimer(signal.ITIMER_REAL, max(0.5, remaining))
-            solution = synthesizer.solve(specification=spec, print_detail=False)
-        except ValueError as error:
-            if "return code" not in str(error):
+            try:
+                solution = synthesizer.solve(specification=spec, print_detail=False)
+            except ValueError as error:
+                if "return code" not in str(error):
+                    raise
+                solution = None
+            if solution is None:
+                continue
+
+            optimized = solution.after_default_optimizations()
+            try:
+                verified = optimized.verify_stabilizers_stimzx(spec)
+            except SynthTimeout:
                 raise
-            solution = None
+            except Exception as error:
+                print(f"synthesize: stimzx verification unavailable ({type(error).__name__}: {error}) — accepting unverified solution", file=sys.stderr)
+                verified = None
         finally:
             if deadline is not None:
                 signal.setitimer(signal.ITIMER_REAL, 0)
@@ -814,15 +826,6 @@ def _solve_region(local_gates, num_qubits, in_pin_names, out_pin_names, min_dept
                     os.environ.pop("MINIFLASH_KISSAT_TIME", None)
                 else:
                     os.environ["MINIFLASH_KISSAT_TIME"] = saved_cap
-        if solution is None:
-            continue
-
-        optimized = solution.after_default_optimizations()
-        try:
-            verified = optimized.verify_stabilizers_stimzx(spec)
-        except Exception as error:
-            print(f"synthesize: stimzx verification unavailable ({type(error).__name__}: {error}) — accepting unverified solution", file=sys.stderr)
-            verified = None
         if verified is False:
             raise VerifyFailed(f"synthesize: stimzx verification FAILED at depth {depth}, n={num_qubits} qubits, stabilizers={stabilizers}")
         return optimized.lasre, fixup
@@ -840,7 +843,7 @@ def synthesize_region(region, cache_dir=".miniflash-cache", in_columns=None, out
     :param in_bases: {qubit: 0|1} wire parity at entry.
     :param side_entry_slots: {qubit: slot} side-face entry ports.
     :param side_exit_slots: {qubit: slot} side-face exit ports.
-    :param budget_s: float | None, SAT budget in seconds.
+    :param budget_s: float | None, region-processing budget in seconds.
     :returns: Cell (pauli_frame set to the sign fixup).
     :raises SynthTimeout: on budget exhaustion (also when a .synthfail marker
         records a timeout at >= this budget).
@@ -902,7 +905,7 @@ def synthesize(partitioned, cache_dir=".miniflash-cache", side_ports=False, die_
     :param cache_dir: str, cell cache directory.
     :param side_ports: bool, swap through cell side faces.
     :param die_dims: (width, rows | None) or None for 1-D.
-    :param budget_s: float | None, SAT budget in seconds per region.
+    :param budget_s: float | None, processing budget in seconds per region.
     :returns: (floorplan, cell_types, channels) — everything elaborate consumes.
     :raises SynthTimeout | SynthUnsat: from the failing region, with ``.region`` set.
     """

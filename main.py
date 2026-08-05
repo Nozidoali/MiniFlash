@@ -16,7 +16,7 @@ def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=Fa
     """Compile a circuit to the Program IR: parse -> partition -> synthesize -> elaborate.
 
     Partitioning is coarse-first: regions start at whole-circuit granularity
-    (capped at 16 qubits) and split in place when a region exhausts its SAT
+    (capped at 16 qubits) and split in place when a region exhausts its processing
     budget (16 -> 12 -> 8 -> 6 -> 4 -> 2).
 
     :param qasm_path: str | Path to a .qasm file.
@@ -26,7 +26,7 @@ def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=Fa
     :param factory: str preset name or FactorySpec.
     :param die_dims: (width, rows | None) or None for 1-D.
     :param factories: int, magic state factory units.
-    :param budget_s: int, SAT budget in seconds per region.
+    :param budget_s: int, processing budget in seconds per region.
     :returns: Program.
     """
     circuit = flash.parse(qasm_path)
@@ -76,7 +76,7 @@ def main():
     parser.add_argument("--die-dims",          nargs=2, type=int, metavar=("WIDTH", "ROWS"),             help="die constraint (ROWS 0 = grow on demand)")
     parser.add_argument("--factories",         type=int, default=1,                                      help="factory units (die mode)")
     parser.add_argument("--dump-ir",           action="store_true",                                      help="also write <out>.program.json")
-    parser.add_argument("--budget",            type=int, default=600,                                    help="per-region SAT seconds")
+    parser.add_argument("--budget",            type=int, default=600,                                    help="per-region processing seconds")
     arguments = parser.parse_args()
 
     die_dims = (arguments.die_dims[0], arguments.die_dims[1] or None) if arguments.die_dims else None
