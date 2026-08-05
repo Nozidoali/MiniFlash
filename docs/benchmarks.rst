@@ -1,12 +1,10 @@
 Benchmarks
 ==========
 
-Compiled **spacetime volume** on 44 Clifford and graph-state circuits,
-against two published lattice-surgery compilers: **TopoLS** (Zhou et
-al., `arXiv:2601.23109 <https://arxiv.org/abs/2601.23109>`_) and
+Compiled **spacetime volume** on 44 circuits, against **TopoLS** (Zhou
+et al., `arXiv:2601.23109 <https://arxiv.org/abs/2601.23109>`_) and
 **DasCot** (Molavi et al., `arXiv:2311.18042
-<https://arxiv.org/abs/2311.18042>`_). Ratios below 1× mean the
-MiniFlash layout is smaller.
+<https://arxiv.org/abs/2311.18042>`_). Below 1× = MiniFlash smaller.
 
 .. list-table::
    :header-rows: 1
@@ -43,15 +41,10 @@ MiniFlash layout is smaller.
 
 .. note::
 
-   **Methodology.** Volume is the tile bounding box of the compiled
-   layout — the same unit in all three tools (MiniFlash
-   ``cube_envelope``, TopoLS :math:`x \cdot y \cdot z`, DasCot
-   ``space × steps``). All tools compile the identical QASM inputs
-   (for DasCot, up to register renaming). TopoLS ran under a 180 s
-   wall clock per circuit; misses are shown as “—”. The bv-100 TopoLS
-   value comes from its fast search profile. random-clifford takes
-   the best of MiniFlash's 1-D and die configurations per circuit.
-   Measured 2026-08.
+   Volume = tile bounding box, the same unit in all three tools.
+   Identical QASM inputs; TopoLS under a 180 s wall (misses “—”,
+   bv-100 from its fast profile); random Clifford takes MiniFlash's
+   best configuration per circuit. Measured 2026-08.
 
 GHZ State Preparation
 ---------------------
@@ -390,13 +383,9 @@ Graph States
 Worst-Case CNOT Circuits (SynthesizeLR)
 ---------------------------------------
 
-``synthlr-n`` are the worst-case linear-reversible (CNOT-only) circuits
-of Khattar et al. (`arXiv:2510.10967
-<https://arxiv.org/abs/2510.10967>`_), who execute them with a
-hand-optimized three-row lattice-surgery template. The ``manual`` column
-is that construction's cost, :math:`3(2n-1)(n-2)` (inferred from the
-paper's two printed instances), in the same space × steps unit;
-MiniFlash synthesizes each instance directly.
+Worst-case CNOT circuits of Khattar et al. (`arXiv:2510.10967
+<https://arxiv.org/abs/2510.10967>`_); ``manual`` = their hand-optimized
+construction, :math:`3(2n-1)(n-2)`, same unit.
 
 .. list-table::
    :header-rows: 1
@@ -445,19 +434,14 @@ MiniFlash synthesizes each instance directly.
      - 20.50×
      - 1.33×
 
-TopoLS solves ``synthlr-4``/``-6`` (default profile) and ``synthlr-8``
-(fast profile). ``synthlr-12`` is MiniFlash's SAT capacity wall: the
-whole-circuit cell exceeds the budget and splits into 19 cells, paying
-the stitching overhead. SynthesizeLR is kept out of the headline
-geomean above.
+``synthlr-12`` hits MiniFlash's SAT capacity wall (the cell splits into
+19 pieces). Not part of the headline geomean.
 
 T-Dense Circuits (Galois-Field Multiplication)
 ----------------------------------------------
 
-Galois-field multipliers are dominated by magic-state injections
-(112–448 T gates). Here MiniFlash trails DasCot — geomean **3.05×** in
-die mode (``--die-dims 2n 1 --factory t-cultivation --factories 2``);
-TopoLS times out on all of them.
+Injection-dominated circuits (112–448 T gates): MiniFlash trails
+DasCot, geomean **3.05×** (die mode); TopoLS times out on all of them.
 
 .. list-table::
    :header-rows: 1
