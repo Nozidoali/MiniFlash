@@ -385,6 +385,75 @@ graph states
      - 2.60×
      - 2.90×
 
+synthlr — worst-case CNOT circuits, vs a hand-optimized construction
+--------------------------------------------------------------------
+
+``synthlr-n`` are the worst-case linear-reversible (CNOT-only) circuits
+from the DQI resource paper of Khattar et al.
+(`arXiv:2510.10967 <https://arxiv.org/abs/2510.10967>`_), where they are
+executed by a **hand-optimized lattice-surgery template**: three patch
+rows — one data row, two routing rows — spanning :math:`2n-1` columns
+for :math:`n-2` rounds. The paper gives two instances (3×23 patches ×
+10d at :math:`n=12`; Fig. 2(b) shows 3×19 × 8d at :math:`n=10`); the
+``manual`` column below is the inferred general form
+:math:`3(2n-1)(n-2)`, in the same space × steps unit as the other
+columns. MiniFlash instead synthesizes each instance directly — and the
+per-instance SAT layout overtakes the worst-case template from
+:math:`n=6` on.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 14 14 14 14 13 13
+
+   * - circuit
+     - MiniFlash
+     - manual
+     - TopoLS
+     - DasCot
+     - vs manual
+     - vs DasCot
+   * - ``synthlr-4``
+     - 54
+     - 42
+     - 351
+     - 539
+     - 1.29×
+     - 0.10×
+   * - ``synthlr-6``
+     - 96
+     - 132
+     - 1,125
+     - 1,944
+     - 0.73×
+     - 0.05×
+   * - ``synthlr-8``
+     - 120
+     - 270
+     - 1,980
+     - 3,321
+     - 0.44×
+     - 0.04×
+   * - ``synthlr-10``
+     - 144
+     - 456
+     - —
+     - 7,502
+     - 0.32×
+     - 0.02×
+   * - ``synthlr-12``
+     - —
+     - 690
+     - —
+     - 10,648
+     - —
+     - —
+
+TopoLS solves ``synthlr-4``/``-6`` under its default profile and
+``synthlr-8`` only under the fast profile; it times out beyond that.
+The MiniFlash ``synthlr-12`` cell is past the current SAT budget on a
+cold cache. synthlr is kept out of the headline geomean above — its
+reference point (a manual construction) is a different kind of baseline.
+
 T-dense circuits
 ----------------
 
