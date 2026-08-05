@@ -2,8 +2,10 @@ Benchmarks
 ==========
 
 Compiled **spacetime volume** on 44 Clifford and graph-state circuits,
-against two published lattice-surgery compilers: **TopoLS** (MCTS
-search) and **DasCot** (heuristic routing). Ratios below 1× mean the
+against two published lattice-surgery compilers: **TopoLS** (Zhou et
+al., `arXiv:2601.23109 <https://arxiv.org/abs/2601.23109>`_) and
+**DasCot** (Molavi et al., `arXiv:2311.18042
+<https://arxiv.org/abs/2311.18042>`_). Ratios below 1× mean the
 MiniFlash layout is smaller.
 
 .. list-table::
@@ -389,17 +391,12 @@ Worst-Case CNOT Circuits (SynthesizeLR)
 ---------------------------------------
 
 ``synthlr-n`` are the worst-case linear-reversible (CNOT-only) circuits
-from the DQI resource paper of Khattar et al.
-(`arXiv:2510.10967 <https://arxiv.org/abs/2510.10967>`_), where they are
-executed by a **hand-optimized lattice-surgery template**: three patch
-rows — one data row, two routing rows — spanning :math:`2n-1` columns
-for :math:`n-2` rounds. The paper gives two instances (3×23 patches ×
-10d at :math:`n=12`; Fig. 2(b) shows 3×19 × 8d at :math:`n=10`); the
-``manual`` column below is the inferred general form
-:math:`3(2n-1)(n-2)`, in the same space × steps unit as the other
-columns. MiniFlash instead synthesizes each instance directly — and the
-per-instance SAT layout overtakes the worst-case template from
-:math:`n=6` on.
+of Khattar et al. (`arXiv:2510.10967
+<https://arxiv.org/abs/2510.10967>`_), who execute them with a
+hand-optimized three-row lattice-surgery template. The ``manual`` column
+is that construction's cost, :math:`3(2n-1)(n-2)` (inferred from the
+paper's two printed instances), in the same space × steps unit;
+MiniFlash synthesizes each instance directly.
 
 .. list-table::
    :header-rows: 1
@@ -448,28 +445,19 @@ per-instance SAT layout overtakes the worst-case template from
      - 20.50×
      - 1.33×
 
-TopoLS solves ``synthlr-4``/``-6`` under its default profile and
-``synthlr-8`` only under the fast profile; it times out beyond that.
-``synthlr-12`` marks MiniFlash's SAT capacity wall: the 12-qubit
-whole-circuit cell exceeds the per-region budget, so the coarse
-portfolio splits it into 19 smaller cells (widths 8 down to 2) and the
-layout pays the stitching overhead — the jump from 144 to 14,148 is the
-price of losing the single-cell solution, not a property of the
-circuit. SynthesizeLR is kept out of the headline geomean above — its
-reference point (a manual construction) is a different kind of
-baseline.
+TopoLS solves ``synthlr-4``/``-6`` (default profile) and ``synthlr-8``
+(fast profile). ``synthlr-12`` is MiniFlash's SAT capacity wall: the
+whole-circuit cell exceeds the budget and splits into 19 cells, paying
+the stitching overhead. SynthesizeLR is kept out of the headline
+geomean above.
 
 T-Dense Circuits (Galois-Field Multiplication)
 ----------------------------------------------
 
 Galois-field multipliers are dominated by magic-state injections
-(112–448 T gates). Here MiniFlash trails DasCot — geomean
-**3.05×** in die mode
-(``--die-dims 2n 1 --factory t-cultivation --factories 2``): the
-residual is MiniFlash's per-layer fabric constant (each cell layer
-plus its channel gap costs ~10 levels, against DasCot's ~1 step per
-routed operation), not injection scheduling. TopoLS times out on all
-of them.
+(112–448 T gates). Here MiniFlash trails DasCot — geomean **3.05×** in
+die mode (``--die-dims 2n 1 --factory t-cultivation --factories 2``);
+TopoLS times out on all of them.
 
 .. list-table::
    :header-rows: 1
