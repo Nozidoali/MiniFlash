@@ -39,6 +39,11 @@ et al., `arXiv:2601.23109 <https://arxiv.org/abs/2601.23109>`_) and
      - **0.76×**
      - **0.52×**
 
+Four of the five families favor MiniFlash; the driver on both sides is
+**cell granularity**. Wins come from whole-circuit cells that amortize
+all fixed overhead; losses appear exactly where the SAT instance
+exceeds its budget and the circuit splits into stitched fragments.
+
 .. note::
 
    Volume = tile bounding box, the same unit in all three tools.
@@ -48,6 +53,10 @@ et al., `arXiv:2601.23109 <https://arxiv.org/abs/2601.23109>`_) and
 
 GHZ State Preparation
 ---------------------
+
+The advantage widens with size and then stabilizes — 0.44–0.46× vs
+TopoLS and 0.12–0.13× vs DasCot from 10 qubits on: one whole-circuit
+cell, constant overhead amortized.
 
 .. list-table::
    :header-rows: 1
@@ -104,6 +113,9 @@ GHZ State Preparation
 
 Bernstein–Vazirani
 --------------------
+
+Green at every size (0.33–0.67× / 0.12–0.25×): the chain structure
+compiles into few wide cells and never needs a split.
 
 .. list-table::
    :header-rows: 1
@@ -167,6 +179,10 @@ Bernstein–Vazirani
 Deutsch–Jozsa
 ---------------
 
+The one family that loses to TopoLS (1.28×): star connectivity
+fragments into a serial chain of cells and the stitching depth adds up.
+Against DasCot it still wins (0.84×).
+
 .. list-table::
    :header-rows: 1
    :widths: 22 16 16 16 15 15
@@ -228,6 +244,10 @@ Deutsch–Jozsa
 
 Random Clifford Circuits
 ------------------------
+
+Through 4 qubits every instance collapses into a single depth-3 cell
+(volume 54, up to 0.12×). From ``8q-cx50`` the whole-circuit SAT
+instance exceeds its budget, cells split, and the ratio crosses 1×.
 
 .. list-table::
    :header-rows: 1
@@ -296,6 +316,10 @@ Random Clifford Circuits
 
 Graph States
 ------------
+
+Rings, chains and sparse random graphs win outright (0.19–0.54×);
+small dense graphs and grids lose, with ``gs16-grid`` paying the same
+split tax as ``synthlr-12`` below.
 
 .. list-table::
    :header-rows: 1
@@ -385,7 +409,10 @@ Worst-Case CNOT Circuits (SynthesizeLR)
 
 Worst-case CNOT circuits of Khattar et al. (`arXiv:2510.10967
 <https://arxiv.org/abs/2510.10967>`_); ``manual`` = their hand-optimized
-construction, :math:`3(2n-1)(n-2)`, same unit.
+construction, :math:`3(2n-1)(n-2)`, same unit. The per-instance SAT
+layout overtakes the worst-case template from :math:`n=6` and widens
+with :math:`n` (0.73× → 0.32×), while staying 10–50× under both
+compilers.
 
 .. list-table::
    :header-rows: 1
@@ -442,6 +469,9 @@ T-Dense Circuits (Galois-Field Multiplication)
 
 Injection-dominated circuits (112–448 T gates): MiniFlash trails
 DasCot, geomean **3.05×** (die mode); TopoLS times out on all of them.
+The residual is a fabric constant — each cell layer plus its channel
+gap costs ~10 time-steps against DasCot's ~1 per routed operation — not
+injection scheduling.
 
 .. list-table::
    :header-rows: 1
