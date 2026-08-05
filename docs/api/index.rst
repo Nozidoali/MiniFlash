@@ -17,6 +17,7 @@ below hold the implementations and reference docstrings.
    solver1d
    solver2d
    synthesis
+   orientation
    program
    factory
 
