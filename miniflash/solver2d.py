@@ -1,3 +1,10 @@
+"""The 2-D floorplan solver (die mode).
+
+Slot-stable placement under a hard die width: qubits hold (row, column)
+homes, cell boxes are admitted row by row, and congestion is relieved by
+eviction and corridor moves. Channel moves generalize to 2-D L/Z grid
+paths, packed per gap level with three-way conflict resolution.
+"""
 from .floorplan import Floorplan, GridMove, column_precedence, left_edge, sequence_moves
 
 

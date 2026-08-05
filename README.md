@@ -2,7 +2,7 @@
   <img src="docs/logo.svg" width="120" alt="miniflash logo">
 </p>
 
-<h1 align="center">miniflash</h1>
+<h1 align="center">MiniFlash</h1>
 
 <p align="center"><b>A <i>mini</i> and <i>fast</i> Clifford+T &rarr; lattice-surgery compiler.</b></p>
 
@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/pure-Python-26bf40.svg" alt="pure python">
 </p>
 
-`miniflash` turns a Clifford+T circuit (OpenQASM 2.0) into a
+MiniFlash turns a Clifford+T circuit (OpenQASM 2.0) into a
 fault-tolerant **lattice-surgery layout**: the explicit 3-D spacetime
 volume that a surface-code quantum computer would execute, with logical
 qubits traced as pipes and every surgery, Hadamard and magic-state

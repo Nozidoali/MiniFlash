@@ -1,3 +1,18 @@
+"""The symbolic floorplan.
+
+Decides *where everything will be* before any geometry exists: parking
+lanes, port columns and orders, channel moves and gap levels. Cells are
+synthesized afterwards to match these decisions, which is what makes
+routing retry-free — the wire never adapts to the cell; the cell adapts
+to the wire.
+
+This module holds the shared move types (:class:`Move`,
+:class:`SideMove`, :class:`GridMove`), the packing helpers, the
+:func:`solve_floorplan` dispatcher and injection placement
+(:func:`place_injections`). The concrete solvers live in
+:mod:`miniflash.solver1d` (column-stable 1-D) and
+:mod:`miniflash.solver2d` (slot-stable die mode).
+"""
 from dataclasses import dataclass, field
 
 

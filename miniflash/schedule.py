@@ -1,3 +1,11 @@
+"""Layer scheduling.
+
+Levelizes the region/injection dependency graph as soon as possible:
+regions on disjoint qubits execute side by side in one layer, and every
+injection is assigned the channel between its neighboring layers. Die
+mode adds an admission test — a region enters a layer only if its box
+fits the hard die width, placed area-first with row first-fit.
+"""
 def _admits(loads, members, box_width, box_qubits, die_dims, num_qubits):
     width, rows = die_dims
     if rows is None:

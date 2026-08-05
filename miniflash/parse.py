@@ -1,3 +1,18 @@
+"""Circuit ingestion.
+
+Reads OpenQASM 2.0 (or a qiskit ``QuantumCircuit``) and normalizes it to
+the accepted Clifford+T gate set: ``h``, ``cx``, ``x``, ``s``, ``sdg``,
+``t``, ``tdg``, ``measure`` and ``barrier`` pass through unchanged, while
+``z``, ``y``, ``cz``, ``swap``, ``id``, ``rz`` at quarter turns and
+``ccx`` (standard 7-T decomposition) are expanded in place. A gate
+outside this set raises ``ValueError`` — nothing is silently dropped.
+
+Example::
+
+    import miniflash as flash
+
+    circuit = flash.parse("benchmarks/algorithms/ghz8.qasm")
+"""
 import math
 
 from qiskit import qasm2
