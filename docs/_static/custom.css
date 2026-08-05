@@ -23,11 +23,8 @@
   font-style: italic;
 }
 
-:root {
-  --font-stack: "CMU Serif", Georgia, "Times New Roman", serif;
-}
-
 body {
+  --font-stack: "CMU Serif", Georgia, "Times New Roman", serif;
   font-size: 1.0625rem;
 }
 
