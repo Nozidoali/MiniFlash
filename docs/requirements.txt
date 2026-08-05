@@ -1,2 +1,4 @@
 sphinx>=7
 furo
+sphinx-design
+sphinx-copybutton
