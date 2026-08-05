@@ -16,7 +16,7 @@ the SAT cell synthesizer MiniFlash is built on — from its official
 Zenodo artifact (sha256-pinned) into the repo root. Everything else
 (qiskit, stim, z3, networkx, stimzx) comes with ``pip install``.
 
-First compile
+First Compile
 -------------
 
 .. code-block:: bash
@@ -29,8 +29,9 @@ glTF extension. Red/blue pipes are wire parity, grey cubes are
 junctions, yellow slabs are Hadamards, green volume is magic-state
 production.
 
-``benchmarks/`` ships 175 circuits to try (ghz / bv / dj, random
-Clifford, graph states, gf-mult, Toffoli, ...).
+``benchmarks/`` ships 175 circuits to try (GHZ, Bernstein–Vazirani,
+Deutsch–Jozsa, random Clifford, graph states, Galois-field
+multipliers, Toffoli, ...).
 
 .. tip::
 
@@ -42,8 +43,8 @@ Clifford, graph states, gf-mult, Toffoli, ...).
 
       python scripts/download_cache.py
 
-SAT solver
-----------
+The SAT Solver
+--------------
 
 Cell synthesis solves SAT instances. MiniFlash uses
 `kissat <https://github.com/arminbiere/kissat>`_ when available — build
@@ -51,7 +52,7 @@ it and point ``MINIFLASH_KISSAT_DIR`` at the directory holding the
 ``kissat`` binary (or put ``kissat`` on ``PATH``) — and falls back to
 z3 otherwise. z3 works but is markedly slower on cold cells.
 
-CLI reference
+CLI Reference
 -------------
 
 .. list-table::
@@ -85,8 +86,8 @@ Partitioning is coarse-first: regions start at whole-circuit
 granularity and split in place whenever a region exhausts its SAT
 budget.
 
-As a library
-------------
+Using MiniFlash as a Library
+----------------------------
 
 The pipeline runs to the **Program IR**, and the package's own backend
 renders it:

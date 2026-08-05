@@ -1,5 +1,5 @@
-schedule
-========
+Scheduling
+==========
 
 .. automodule:: miniflash.schedule
    :members:

@@ -1,4 +1,4 @@
-Driver and utilities
+Driver and Utilities
 ====================
 
 ``main.py`` is the repo-root driver + CLI: ``compile()`` runs the
@@ -8,20 +8,20 @@ package pipeline to a Program, ``main()`` emits glTF through
 Zenodo artifact) and ``scripts/download_cache.py`` (the pre-warmed cell
 cache, from the GitHub release).
 
-main (driver + CLI)
+The Driver: main.py
 -------------------
 
 .. automodule:: main
    :members:
 
-scripts.download_lassynth
--------------------------
+Fetching LaSsynth: scripts.download_lassynth
+--------------------------------------------
 
 .. automodule:: scripts.download_lassynth
    :members:
 
-scripts.download_cache
-----------------------
+Pre-Warming the Cache: scripts.download_cache
+---------------------------------------------
 
 .. automodule:: scripts.download_cache
    :members:

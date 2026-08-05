@@ -1,5 +1,5 @@
-synthesis
-=========
+Cell Synthesis
+==============
 
 .. automodule:: miniflash.synthesis
    :members:

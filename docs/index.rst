@@ -36,7 +36,7 @@ ISCA 2024).
       The pipeline stages — parse to Program IR to glTF — as a small
       public API.
 
-How it works
+How It Works
 ------------
 
 Routing is decided *before* synthesis. A floorplan fixes every port
@@ -62,7 +62,7 @@ structural, and there is no routing retry loop to fail.
 
 .. toctree::
    :hidden:
-   :caption: Getting started
+   :caption: Getting Started
 
    quickstart
 

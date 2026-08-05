@@ -14,19 +14,19 @@ MiniFlash layout is smaller.
      - circuits
      - geomean vs TopoLS
      - geomean vs DasCot
-   * - ghz
+   * - GHZ state preparation
      - 7
      - 0.61×
      - 0.20×
-   * - bv
+   * - Bernstein–Vazirani
      - 8
      - 0.51×
      - 0.19×
-   * - dj
+   * - Deutsch–Jozsa
      - 8
      - 1.28×
      - 0.84×
-   * - random clifford
+   * - random Clifford
      - 9
      - 0.84×
      - 0.94×
@@ -51,8 +51,8 @@ MiniFlash layout is smaller.
    the best of MiniFlash's 1-D and die configurations per circuit.
    Measured 2026-08.
 
-ghz
----
+GHZ State Preparation
+---------------------
 
 .. list-table::
    :header-rows: 1
@@ -107,8 +107,8 @@ ghz
      - 0.44×
      - 0.12×
 
-bv
---
+Bernstein–Vazirani
+--------------------
 
 .. list-table::
    :header-rows: 1
@@ -169,8 +169,8 @@ bv
      - 0.64×
      - 0.25×
 
-dj
---
+Deutsch–Jozsa
+---------------
 
 .. list-table::
    :header-rows: 1
@@ -231,8 +231,8 @@ dj
      - 1.31×
      - 0.75×
 
-random clifford
----------------
+Random Clifford Circuits
+------------------------
 
 .. list-table::
    :header-rows: 1
@@ -299,7 +299,7 @@ random clifford
      - 3.51×
      - 4.19×
 
-graph states
+Graph States
 ------------
 
 .. list-table::
@@ -385,8 +385,8 @@ graph states
      - 2.60×
      - 2.90×
 
-synthlr — worst-case CNOT circuits, vs a hand-optimized construction
---------------------------------------------------------------------
+Worst-Case CNOT Circuits (SynthesizeLR)
+---------------------------------------
 
 ``synthlr-n`` are the worst-case linear-reversible (CNOT-only) circuits
 from the DQI resource paper of Khattar et al.
@@ -454,8 +454,8 @@ The MiniFlash ``synthlr-12`` cell is past the current SAT budget on a
 cold cache. synthlr is kept out of the headline geomean above — its
 reference point (a manual construction) is a different kind of baseline.
 
-T-dense circuits
-----------------
+T-Dense Circuits (Galois-Field Multiplication)
+----------------------------------------------
 
 Galois-field multipliers are dominated by magic-state injections
 (112–448 T gates). Here MiniFlash trails DasCot — geomean

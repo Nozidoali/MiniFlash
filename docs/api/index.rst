@@ -1,4 +1,4 @@
-API reference
+API Reference
 =============
 
 ``import miniflash as flash`` exposes every public name at the package

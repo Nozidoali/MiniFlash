@@ -1,5 +1,5 @@
-partition
-=========
+Partitioning
+============
 
 .. automodule:: miniflash.partition
    :members:
