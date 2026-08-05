@@ -211,6 +211,23 @@ def _stable_layer_columns(layers, num_qubits):
     return in_port_columns, out_port_columns, lane_columns, box_layouts
 
 
+def solve_channel(before, after, scratch_column):
+    """Solve one channel's jogs from explicit slot maps.
+
+    Used by orientation surgery to re-solve a single channel after a
+    laid-down layer rewrites its out columns.
+
+    :param before: {qubit: column} above the channel.
+    :param after: {qubit: column} below the channel.
+    :param scratch_column: int, spare column for cycle breaking.
+    :returns: (list[Move], int gap levels).
+    """
+    raw_moves = [(qubit, before[qubit], after[qubit]) for qubit in sorted(before) if qubit in after and before[qubit] != after[qubit]]
+    ordered = _sequence_moves(raw_moves, scratch_column)
+    levels = _pack_levels(ordered)
+    moves = [Move(qubit=qubit, from_column=from_column, to_column=to_column, level=level, plane=2 if to_column > from_column else 0) for level, (qubit, from_column, to_column) in zip(levels, ordered)]
+    return moves, (max(levels) + 1 if levels else 0)
+
 
 def solve_1d(layers, num_qubits, side_ports, with_magic):
     """Solve the 1-D floorplan: port columns, lanes, channel moves, gap levels.
