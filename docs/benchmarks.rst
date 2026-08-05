@@ -441,18 +441,23 @@ per-instance SAT layout overtakes the worst-case template from
      - 0.32×
      - 0.02×
    * - ``synthlr-12``
-     - —
+     - 14,148
      - 690
      - —
      - 10,648
-     - —
-     - —
+     - 20.50×
+     - 1.33×
 
 TopoLS solves ``synthlr-4``/``-6`` under its default profile and
 ``synthlr-8`` only under the fast profile; it times out beyond that.
-The MiniFlash ``synthlr-12`` cell is past the current SAT budget on a
-cold cache. synthlr is kept out of the headline geomean above — its
-reference point (a manual construction) is a different kind of baseline.
+``synthlr-12`` marks MiniFlash's SAT capacity wall: the 12-qubit
+whole-circuit cell exceeds the per-region budget, so the coarse
+portfolio splits it into 19 smaller cells (widths 8 down to 2) and the
+layout pays the stitching overhead — the jump from 144 to 14,148 is the
+price of losing the single-cell solution, not a property of the
+circuit. SynthesizeLR is kept out of the headline geomean above — its
+reference point (a manual construction) is a different kind of
+baseline.
 
 T-Dense Circuits (Galois-Field Multiplication)
 ----------------------------------------------
