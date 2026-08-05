@@ -28,7 +28,7 @@ from lassynth import LatticeSurgerySynthesizer
 
 from dataclasses import dataclass
 
-from .floorplan import solve_floorplan, wire_only_floorplan
+from .floorplan import solve_floorplan, passthrough_floorplan
 from .schedule import schedule_layers
 
 STRIDE = 2
@@ -39,9 +39,15 @@ AXIS_INDEX = {"I": 0, "J": 1, "K": 2}
 
 @dataclass
 class Cell:
+    """A synthesized lattice-surgery cell: geometry blocks plus port pins."""
+
+    #: [I, J, K] extents in cube units
     dims: list
+    #: port pin dicts — name ("in_k"/"out_k"), offset, dir, parity
     pins: list
+    #: geometry blocks (pipes, hadamards) in cell-local coordinates
     blocks: list
+    #: Pauli correction carried by this instance (recomputed per use)
     pauli_frame: str = "I"
 
     @classmethod
@@ -923,12 +929,12 @@ def synthesize(partitioned, cache_dir=".miniflash-cache", side_ports=False, die_
     :raises SynthTimeout | SynthUnsat: from the failing region, with ``.region`` set.
     """
     regions, events, num_qubits = partitioned.regions, partitioned.events, partitioned.num_qubits
-    layers, channels = schedule_layers(regions, events, die_dims=die_dims, num_qubits=num_qubits)
+    layers, channels = schedule_layers(partitioned, die_dims=die_dims)
 
     if regions:
         floorplan = solve_floorplan([[region.qubits for region in layer] for layer in layers], num_qubits, side_ports=side_ports, with_magic=bool(events), die_dims=die_dims)
     else:
-        floorplan = wire_only_floorplan(num_qubits, with_magic=True)
+        floorplan = passthrough_floorplan(num_qubits, with_magic=True)
 
     cell_types = []
     wire_bits = {qubit: 0 for qubit in range(num_qubits)}

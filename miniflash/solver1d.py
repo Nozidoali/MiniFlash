@@ -10,7 +10,7 @@ function; there is no search.
 """
 import heapq
 
-from .floorplan import Floorplan, INJECTION_BANDWIDTH, Move, SideMove, column_precedence, left_edge, sequence_moves
+from .floorplan import Floorplan, INJECTION_BANDWIDTH, Move, SideMove, _column_precedence, _left_edge, _sequence_moves
 
 
 def _parked_intervals(member_sets, num_qubits):
@@ -124,8 +124,8 @@ def _pack_levels(ordered_moves):
         other_low, other_high, other_plane = shapes[other]
         return plane == other_plane and not (high < other_low or other_high < low)
 
-    predecessors = column_precedence(ordered_moves, lambda move: (move[1], move[2]))
-    return left_edge(ordered_moves, lambda index: shapes[index][0], conflicts, predecessors)
+    predecessors = _column_precedence(ordered_moves, lambda move: (move[1], move[2]))
+    return _left_edge(ordered_moves, lambda index: shapes[index][0], conflicts, predecessors)
 
 
 def _assign_side_slots(side_moves_by_layer, plane):
@@ -211,6 +211,7 @@ def _stable_layer_columns(layers, num_qubits):
     return in_port_columns, out_port_columns, lane_columns, box_layouts
 
 
+
 def solve_1d(layers, num_qubits, side_ports, with_magic):
     """Solve the 1-D floorplan: port columns, lanes, channel moves, gap levels.
 
@@ -274,7 +275,7 @@ def solve_1d(layers, num_qubits, side_ports, with_magic):
         after.update(lane_columns[channel + 1])
         raw_moves = [(qubit, before[qubit], after[qubit]) for qubit in sorted(before) if qubit in after and before[qubit] != after[qubit]]
 
-        ordered = sequence_moves(raw_moves, scratch_column)
+        ordered = _sequence_moves(raw_moves, scratch_column)
         if len(ordered) > len(raw_moves):
             any_cycle = True
         levels = _pack_levels(ordered)

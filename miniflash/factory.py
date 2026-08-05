@@ -12,9 +12,15 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class FactorySpec:
+    """A magic-state factory preset: tile footprint plus production interval."""
+
+    #: preset name
     name: str
+    #: footprint width in tiles (I)
     dim_i: int
+    #: footprint depth in tiles (J)
     dim_j: int
+    #: layers of K between two produced magic states
     interval_k: int
 
 
@@ -46,7 +52,7 @@ def correction_for(outcomes, dagger: bool) -> str:
     """Clifford correction of the M1 gadget for a given outcome pair.
 
     :param outcomes: (s, r) ints (0|1) — ZZ outcome and magic readout.
-    :param dagger: bool, True for tdg.
+    :param dagger: bool, True for ``tdg``.
     :returns: "I" or "Z" (Pauli-frame correction on the data qubit).
     """
     return (_CORRECTIONS_DAGGER if dagger else _CORRECTIONS)[tuple(outcomes)]

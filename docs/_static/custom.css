@@ -16,6 +16,15 @@ article[role="main"] {
   font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
   font-size: 1.0625rem;
 }
+article[role="main"] h1,
+article[role="main"] h2,
+article[role="main"] h3,
+article[role="main"] h4,
+article[role="main"] h5,
+article[role="main"] h6,
+article[role="main"] .sd-card-title {
+  font-family: inherit;
+}
 
 .sidebar-logo { max-width: 58%; margin: 0.6rem auto 0; }
 .sd-card { transition: box-shadow 0.15s ease; }

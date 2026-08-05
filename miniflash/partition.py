@@ -22,23 +22,36 @@ from .parse import CLIFFORD_GATES
 
 @dataclass
 class Region:
+    """A connected Clifford window destined to become one synthesized cell."""
+
+    #: sorted qubits the region touches
     qubits: list
+    #: (name, qubits) gate list in circuit order
     gates: list
+    #: {qubit: "in_k"} pin-name map
     in_pins: dict
+    #: {qubit: "out_k"} pin-name map
     out_pins: dict
+    #: global index of the region's first gate
     first_gate_index: int = -1
+    #: global gate indices, parallel to gates
     gate_indices: list = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class InjectionEvent:
+    """One ``t``/``tdg`` gate lifted out as a magic-state injection."""
+
+    #: global gate index in the flattened circuit
     index: int
+    #: data qubit
     qubit: int
+    #: True for ``tdg``
     dagger: bool
 
 
 def injection_events(circuit) -> list:
-    """Extract every t/tdg gate as a magic-state injection event.
+    """Extract every ``t``/``tdg`` gate as a magic-state injection event.
 
     :param circuit: qiskit QuantumCircuit (already parse()d).
     :returns: list[InjectionEvent] in gate order.
@@ -67,9 +80,13 @@ _PNG_RAIL = "#e5e4e0"
 class PartitionedCircuit:
     """partition() output: Clifford regions + T injection events + the flattened gate list."""
 
+    #: number of circuit qubits
     num_qubits: int
+    #: flattened gate list in circuit order
     gates: list
+    #: list[Region] ordered by first gate index
     regions: list
+    #: list[InjectionEvent] in gate order
     events: list
 
     def to_text(self, color=False):
@@ -397,14 +414,14 @@ def _rescue_orphans(all_gates, windows):
 def partition(circuit: QuantumCircuit, max_qubits=4, max_gates=16) -> list:
     """Cut the Clifford part of a circuit into connected windows for cell synthesis.
 
-    t/tdg/measure cut ONLY their own qubit's timeline (per-qubit T cut):
+    ``t``/``tdg``/``measure`` cut ONLY their own qubit's timeline (per-qubit T cut):
     Clifford context on other qubits fuses across them.
 
     :param circuit: qiskit QuantumCircuit.
     :param max_qubits: int, cap on qubits per region.
     :param max_gates: int, cap on gates per region.
     :returns: PartitionedCircuit — regions ordered by first gate index, plus
-        the t/tdg injection events and the flattened gate list.
+        the ``t``/``tdg`` injection events and the flattened gate list.
     :raises ValueError: if a Clifford gate cannot be covered under the caps.
     """
     gates = extract_gates(circuit)

@@ -26,47 +26,85 @@ def _deep_list(value):
 
 @dataclass(frozen=True)
 class MacroInstance:
+    """One placed macro: a synthesized cell, an injection crossbar or a factory."""
+
+    #: "cell" | "injection" | "factory"
     kind: str
+    #: geometry payload — Cell for cells, FactorySpec for factories
     ref: object
+    #: layer index for cells, channel index for injections
     layer: int
+    #: die row
     row: int
+    #: column offset of the macro's left edge
     offset: int
+    #: qubits the macro acts on
     qubits: tuple = ()
+    #: injection round within the channel
     round: int = 0
+    #: injection crossbar slot (0 | 1)
     slot: int = 0
+    #: in-gap track level, -1 for block injections
     level: int = -1
 
 
 @dataclass(frozen=True)
 class Net:
+    """One qubit's wire through one channel, source endpoint to sink endpoint."""
+
+    #: qubit the wire carries
     qubit: int
+    #: endpoint at the upper boundary (pin or parked-slot descriptor)
     source: tuple
+    #: endpoint at the lower boundary
     sink: tuple
+    #: channel (inter-layer gap) index
     channel: int
+    #: entry track level of the jog chain, -1 for a straight run
     track: int
+    #: jog tuples (level, from, to, plane); die mode appends route segments
     path: tuple
+    #: wire color bit entering the next layer (0 | 1)
     color: int
+    #: True when a pending Hadamard must land before the next cell
     flip: bool
 
 
 @dataclass(frozen=True)
 class Channel:
+    """An inter-layer routing gap."""
+
+    #: channel index (between layer ``index`` and ``index + 1``)
     index: int
+    #: number of jog track levels
     tracks: int
 
 
 @dataclass
 class Program:
+    """The compiled IR: placed macros, routed nets and channel geometry."""
+
+    #: (width, rows | None) die constraint, None for 1-D
     die_dims: tuple
+    #: number of die rows used
     rows: int = 0
+    #: placed MacroInstance list (cells, injections, factories)
     macros: list = field(default_factory=list)
+    #: routed Net list, one per qubit per channel
     nets: list = field(default_factory=list)
+    #: Channel list, one per inter-layer gap
     channels: list = field(default_factory=list)
+    #: number of logical qubits
     num_qubits: int = 0
+    #: leftmost magic-lane column, None without injections
     magic_column: int = None
+    #: per layer, cell-band width in columns
     box_widths: list = field(default_factory=list)
+    #: per layer, {qubit: (row, column)} parked slots
     parking: list = field(default_factory=list)
+    #: per layer, [exit map, entry map] of side moves as (lane, slot, plane)
     sides: list = field(default_factory=list)
+    #: {qubit: color bit} at the final boundary
     exit_colors: dict = field(default_factory=dict)
 
     def to_dict(self):

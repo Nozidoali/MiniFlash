@@ -27,20 +27,19 @@ def _region_anchors(region):
     return {qubit: anchors.get(qubit, region.first_gate_index) for qubit in region.qubits}
 
 
-def schedule_layers(regions, events, die_dims=None, num_qubits=0):
+def schedule_layers(partitioned, die_dims=None):
     """Assign regions to execution layers and injection events to inter-layer channels.
 
     Processes items in per-qubit timeline order (fused regions may start, in global
     index, before an injection that must precede their gates on the injected qubit).
 
-    :param regions: list[Region].
-    :param events: list[InjectionEvent].
+    :param partitioned: PartitionedCircuit.
     :param die_dims: (width, rows | None) or None for 1-D.
-    :param num_qubits: int, needed for die admission checks.
     :returns: (layers, channels) — layers is list per layer of Region; channels is
         list[int] per event, the layer index before which the injection fires.
     :raises ValueError: if a region cannot fit the die.
     """
+    regions, events, num_qubits = partitioned.regions, partitioned.events, partitioned.num_qubits
     sequence = {}
     entries = []
     for order, region in enumerate(regions):
