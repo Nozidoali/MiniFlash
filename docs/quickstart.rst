@@ -12,7 +12,7 @@ Install
    python scripts/download_lassynth.py
 
 The last step fetches `LaSsynth <https://arxiv.org/abs/2404.18369>`_ —
-the SAT cell synthesizer miniflash is built on — from its official
+the SAT cell synthesizer MiniFlash is built on — from its official
 Zenodo artifact (sha256-pinned) into the repo root. Everything else
 (qiskit, stim, z3, networkx, stimzx) comes with ``pip install``.
 
@@ -45,7 +45,7 @@ Clifford, graph states, gf-mult, Toffoli, ...).
 SAT solver
 ----------
 
-Cell synthesis solves SAT instances. miniflash uses
+Cell synthesis solves SAT instances. MiniFlash uses
 `kissat <https://github.com/arminbiere/kissat>`_ when available — build
 it and point ``MINIFLASH_KISSAT_DIR`` at the directory holding the
 ``kissat`` binary (or put ``kissat`` on ``PATH``) — and falls back to

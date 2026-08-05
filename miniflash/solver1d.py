@@ -1,3 +1,13 @@
+"""The 1-D floorplan solver.
+
+Column-stable placement: every qubit keeps a home column for the whole
+layout while cell boxes float around them. Between layers, wires the
+next cell does not consume are swapped out to straight parking lanes and
+swapped back on demand. Swap jogs are permutation-decomposed —
+vacate-before-occupy chains, genuine cycles broken through a scratch
+column — and packed into channel gap levels left-edge style. A pure
+function; there is no search.
+"""
 import heapq
 
 from .floorplan import Floorplan, INJECTION_BANDWIDTH, Move, SideMove, column_precedence, left_edge, sequence_moves

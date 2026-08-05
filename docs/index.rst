@@ -1,9 +1,9 @@
-miniflash
+MiniFlash
 =========
 
 **A mini and fast Clifford+T → lattice-surgery compiler.**
 
-``miniflash`` turns a Clifford+T circuit (OpenQASM 2.0) into a
+MiniFlash turns a Clifford+T circuit (OpenQASM 2.0) into a
 fault-tolerant lattice-surgery layout — the explicit 3-D spacetime
 volume that a surface-code quantum computer would execute, with logical
 qubits traced as pipes and every surgery, Hadamard and magic-state

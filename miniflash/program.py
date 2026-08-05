@@ -1,3 +1,14 @@
+"""The Program IR.
+
+The compiler's midpoint: a :class:`Program` holds macros (cells,
+injections, factories), parity-colored inter-layer nets, channels,
+parking and exit colors — everything the backend needs and nothing left
+for it to decide. :func:`elaborate` fuses the floorplan, the synthesized
+cells and the injection points into a Program; :meth:`Program.stats`
+reports volume metrics, per-region Pauli frames and injection
+correction tables. The IR round-trips through JSON via ``to_dict`` /
+``from_dict``.
+"""
 from dataclasses import dataclass, field
 
 from .synthesis import Cell

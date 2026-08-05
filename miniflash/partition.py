@@ -1,3 +1,17 @@
+"""Circuit partitioning.
+
+Cuts the Clifford part of a circuit into connected gate windows, each of
+which becomes one synthesized cell. The cut is *per-qubit*: a ``t``,
+``tdg`` or ``measure`` gate interrupts only its own qubit's timeline, so
+Clifford context on the remaining qubits fuses across it. T gates leave
+the windows entirely and become :class:`InjectionEvent` records,
+scheduled between cells as magic-state injections.
+
+The result is a :class:`PartitionedCircuit` — regions, injection events
+and the flattened gate list — which also renders itself as a terminal
+timeline (:meth:`PartitionedCircuit.to_text`) or a figure
+(:meth:`PartitionedCircuit.save_png`).
+"""
 import bisect
 from dataclasses import dataclass, field
 

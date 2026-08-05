@@ -1,3 +1,14 @@
+"""The backend: Program IR to glTF.
+
+:func:`check_program` validates the IR, :func:`build_layout` lowers it
+to concrete 3-D pipe geometry by pure arithmetic — stacked cell layers,
+straight lanes, deterministic swap jogs, injection crossbars — and
+:func:`write_gltf` emits a self-contained glTF 2.0 scene: red/blue
+parity pipes, grey junction cubes, yellow Hadamard slabs, green
+magic-state volume. The layout dict carries the volume metrics
+(``volume``, ``occupied_volume``, ``cube_envelope``) reported on the
+:doc:`benchmarks page </benchmarks>`.
+"""
 import base64
 import json
 import struct

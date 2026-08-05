@@ -1,3 +1,12 @@
+"""Magic state factories.
+
+Named factory configurations (:data:`FACTORIES`: ``15-to-1``,
+``t-cultivation``) with a tile footprint and a production interval. The
+interval paces injection scheduling — the first consumed state also
+pays a full interval — and each consumed state draws one production box
+in the layout. Also holds the selective-readout correction table for
+injections (:func:`correction_for`).
+"""
 from dataclasses import dataclass
 
 

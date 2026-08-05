@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(".."))
 
-project = "miniflash"
+project = "MiniFlash"
 author = "hanyu"
 release = "0.0.1"
 
@@ -26,7 +26,7 @@ copybutton_prompt_text = r">>> |\.\.\. |\$ "
 copybutton_prompt_is_regexp = True
 
 html_theme = "furo"
-html_title = "miniflash"
+html_title = "MiniFlash"
 html_logo = "logo.svg"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
