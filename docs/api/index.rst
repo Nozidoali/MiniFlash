@@ -14,8 +14,9 @@ below hold the implementations and reference docstrings.
    partition
    schedule
    floorplan
-   solver1d
-   solver2d
+   placement1d
+   placement2d
+   channel
    synthesis
    orientation
    program

@@ -3,14 +3,12 @@
 Column-stable placement: every qubit keeps a home column for the whole
 layout while cell boxes float around them. Between layers, wires the
 next cell does not consume are swapped out to straight parking lanes and
-swapped back on demand. Swap jogs are permutation-decomposed —
-vacate-before-occupy chains, genuine cycles broken through a scratch
-column — and packed into channel gap levels left-edge style. A pure
-function; there is no search.
+swapped back on demand; the resulting channel rearrangements are solved
+by :func:`miniflash.channel.solve`. A pure function; there is no search.
 """
 import heapq
 
-from .floorplan import Floorplan, INJECTION_BANDWIDTH, Move, SideMove, _column_precedence, _left_edge, _sequence_moves
+from .floorplan import Floorplan, INJECTION_BANDWIDTH, SideMove
 
 
 def _parked_intervals(member_sets, num_qubits):
@@ -113,21 +111,6 @@ def _assign_layer_columns(layers, num_qubits, lane_column_of):
     return in_port_columns, out_port_columns, lane_columns, box_layouts
 
 
-def _pack_levels(ordered_moves):
-    shapes = []
-    for qubit, from_column, to_column in ordered_moves:
-        plane = 2 if to_column > from_column else 0
-        shapes.append((min(from_column, to_column), max(from_column, to_column), plane))
-
-    def conflicts(index, other):
-        low, high, plane = shapes[index]
-        other_low, other_high, other_plane = shapes[other]
-        return plane == other_plane and not (high < other_low or other_high < low)
-
-    predecessors = _column_precedence(ordered_moves, lambda move: (move[1], move[2]))
-    return _left_edge(ordered_moves, lambda index: shapes[index][0], conflicts, predecessors)
-
-
 def _assign_side_slots(side_moves_by_layer, plane):
     slotted = []
     for layer_moves in side_moves_by_layer:
@@ -211,22 +194,6 @@ def _stable_layer_columns(layers, num_qubits):
     return in_port_columns, out_port_columns, lane_columns, box_layouts
 
 
-def solve_channel(before, after, scratch_column):
-    """Solve one channel's jogs from explicit slot maps.
-
-    Used by orientation surgery to re-solve a single channel after a
-    laid-down layer rewrites its out columns.
-
-    :param before: {qubit: column} above the channel.
-    :param after: {qubit: column} below the channel.
-    :param scratch_column: int, spare column for cycle breaking.
-    :returns: (list[Move], int gap levels).
-    """
-    raw_moves = [(qubit, before[qubit], after[qubit]) for qubit in sorted(before) if qubit in after and before[qubit] != after[qubit]]
-    ordered = _sequence_moves(raw_moves, scratch_column)
-    levels = _pack_levels(ordered)
-    moves = [Move(qubit=qubit, from_column=from_column, to_column=to_column, level=level, plane=2 if to_column > from_column else 0) for level, (qubit, from_column, to_column) in zip(levels, ordered)]
-    return moves, (max(levels) + 1 if levels else 0)
 
 
 def solve_1d(layers, num_qubits, side_ports, with_magic):
@@ -290,14 +257,15 @@ def solve_1d(layers, num_qubits, side_ports, with_magic):
         before.update(lane_columns[channel])
         after = dict(in_port_columns[channel + 1])
         after.update(lane_columns[channel + 1])
-        raw_moves = [(qubit, before[qubit], after[qubit]) for qubit in sorted(before) if qubit in after and before[qubit] != after[qubit]]
 
-        ordered = _sequence_moves(raw_moves, scratch_column)
-        if len(ordered) > len(raw_moves):
+        from .channel import Lane, RearrangementChannel, solve
+
+        lanes = {qubit: Lane(start=(0, before[qubit]), end=(0, after[qubit])) for qubit in sorted(before) if qubit in after}
+        plan = solve(RearrangementChannel(lanes=lanes, scratch=((0, scratch_column),)))
+        if len(plan.moves) > sum(1 for lane in lanes.values() if lane.start != lane.end):
             any_cycle = True
-        levels = _pack_levels(ordered)
-        moves.append([Move(qubit=qubit, from_column=from_column, to_column=to_column, level=level, plane=2 if to_column > from_column else 0) for level, (qubit, from_column, to_column) in zip(levels, ordered)])
-        gap_levels.append(max(levels) + 1 if levels else 0)
+        moves.append(list(plan.moves))
+        gap_levels.append(plan.levels)
 
     base_width = first_lane_column + num_lanes + (1 if any_cycle else 0)
     magic_column = None

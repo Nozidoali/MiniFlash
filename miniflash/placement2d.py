@@ -3,81 +3,12 @@
 Slot-stable placement under a hard die width: qubits hold (row, column)
 homes, cell boxes are admitted row by row, and congestion is relieved by
 eviction and corridor moves. Channel moves generalize to 2-D L/Z grid
-paths, packed per gap level with three-way conflict resolution.
+paths, solved per channel by :func:`miniflash.channel.solve`; corridor
+relief (evicting parked qubits) stays here as the caller's policy over
+the pure packer.
 """
-from .floorplan import Floorplan, GridMove, _column_precedence, _left_edge, _sequence_moves
-
-
-def _segments(src, dst, corridor):
-    (row_a, col_a), (row_b, col_b) = src, dst
-    segs = []
-    if row_a == row_b:
-        if col_a != col_b:
-            segs.append(("I", row_a, 2 if col_b > col_a else 0, min(col_a, col_b), max(col_a, col_b)))
-        return tuple(segs)
-    if corridor != col_a:
-        segs.append(("I", row_a, 2 if corridor > col_a else 0, min(col_a, corridor), max(col_a, corridor)))
-    segs.append(("J", corridor, min(row_a, row_b), max(row_a, row_b)))
-    if corridor != col_b:
-        segs.append(("I", row_b, 2 if col_b > corridor else 0, min(corridor, col_b), max(corridor, col_b)))
-    return tuple(segs)
-
-
-def _pick_corridor(src, dst, static, width):
-    (row_a, _), (row_b, col_b) = src, dst
-    if row_a == row_b:
-        return col_b
-    low, high = min(row_a, row_b), max(row_a, row_b)
-    for delta in range(width):
-        for corridor in (col_b + delta, col_b - delta):
-            if 0 <= corridor < width and not any((row, corridor) in static for row in range(low, high + 1)):
-                return corridor
-    raise ValueError(f"solve_floorplan: no clear J corridor between rows {row_a} and {row_b} within die width {width}")
-
-
-def _seg_conflict(seg_a, seg_b):
-    if seg_a[0] == "I" and seg_b[0] == "I":
-        return seg_a[1] == seg_b[1] and seg_a[2] == seg_b[2] and not (seg_a[4] < seg_b[3] or seg_b[4] < seg_a[3])
-    if seg_a[0] == "J" and seg_b[0] == "J":
-        return seg_a[1] == seg_b[1] and not (seg_a[3] < seg_b[2] or seg_b[3] < seg_a[2])
-    i_seg, j_seg = (seg_a, seg_b) if seg_a[0] == "I" else (seg_b, seg_a)
-    return i_seg[3] <= j_seg[1] <= i_seg[4] and j_seg[2] <= i_seg[1] <= j_seg[3]
-
-
-def _pack_grid_levels(ordered, static, width):
-    paths = [_segments(src, dst, _pick_corridor(src, dst, static, width)) for _, src, dst in ordered]
-
-    def conflicts(index, other):
-        return any(_seg_conflict(seg, other_seg) for seg in paths[index] for other_seg in paths[other])
-
-    predecessors = _column_precedence(ordered, lambda move: (move[1], move[2]))
-    levels = _left_edge(ordered, lambda index: min((seg[3] for seg in paths[index] if seg[0] == "I"), default=0), conflicts, predecessors)
-    return [GridMove(qubit=qubit, src=src, dst=dst, level=level, path=path) for (qubit, src, dst), level, path in zip(ordered, levels, paths)]
-
-
-def _corridor_relief(moves, static_of, immovable, width):
-    for _, src, dst in moves:
-        if src[0] == dst[0]:
-            continue
-        low, high = sorted((src[0], dst[0]))
-        target = dst[1]
-        best = None
-        feasible = False
-        for delta in range(width):
-            for corridor in (target + delta, target - delta):
-                if not 0 <= corridor < width:
-                    continue
-                blockers = [static_of[(row, corridor)] for row in range(low, high + 1) if (row, corridor) in static_of]
-                if not blockers:
-                    feasible = True
-                    break
-                if all(blocker not in immovable for blocker in blockers) and (best is None or len(blockers) < len(best)):
-                    best = blockers
-            if feasible:
-                break
-        if not feasible:
-            return best
-    return []
+from .channel import ChannelInfeasible, Lane, RearrangementChannel, solve
+from .floorplan import Floorplan
 
 
 def solve_2d(layers, num_qubits, die_dims, with_magic):
@@ -174,25 +105,26 @@ def solve_2d(layers, num_qubits, die_dims, with_magic):
             before.update(parked_slots[channel])
             after = dict(slots_by_layer[channel + 1])
             after.update(parked_slots[channel + 1])
-            raw = [(qubit, before[qubit], after[qubit]) for qubit in sorted(before) if qubit in after and before[qubit] != after[qubit]]
             occupied = set(before.values()) | set(after.values())
             free = [(row, column) for row in range(rows) for column in range(width) if (row, column) not in occupied]
-            scratch_slot = min(free) if free else (rows, 0)
-
-            ordered = _sequence_moves(raw, scratch_slot)
-            if len(ordered) > len(raw) and not free:
-                if not can_grow:
-                    raise ValueError(f"solve_floorplan: no scratch slot for move cycle in channel {channel} of die {die_dims}")
-                rows += 1
-                continue
-
             static_of = {before[qubit]: qubit for qubit in before if qubit in after and before[qubit] == after[qubit]}
             immovable = set(slots_by_layer[channel + 1])
-            relocate = _corridor_relief(ordered, static_of, immovable, width)
-            if relocate is None:
-                raise ValueError(f"solve_floorplan: no clear J corridor in channel {channel} of die {die_dims}")
-            if relocate:
-                for qubit in relocate:
+
+            lanes = {qubit: Lane(start=before[qubit], end=after[qubit]) for qubit in sorted(before) if qubit in after}
+            problem = RearrangementChannel(lanes=lanes, static=frozenset(static_of), scratch=tuple(free[:1]), width=width)
+            try:
+                plan = solve(problem)
+            except ChannelInfeasible as infeasible:
+                if infeasible.scratch:
+                    if not can_grow:
+                        raise ValueError(f"solve_floorplan: no scratch slot for move cycle in channel {channel} of die {die_dims}")
+                    rows += 1
+                    continue
+                movable = [blockers for blockers in infeasible.blocker_sets if blockers and all(static_of[slot] not in immovable for slot in blockers)]
+                if not movable:
+                    raise ValueError(f"solve_floorplan: no clear J corridor in channel {channel} of die {die_dims}")
+                for slot in min(movable, key=len):
+                    qubit = static_of[slot]
                     home = parked_slots[channel + 1][qubit]
                     while True:
                         taken = windows_by_layer[channel + 1] | set(parked_slots[channel + 1].values())
@@ -205,9 +137,8 @@ def solve_2d(layers, num_qubits, die_dims, with_magic):
                         rows += 1
                 continue
 
-            packed = _pack_grid_levels(ordered, set(static_of), width)
-            grid_moves.append(packed)
-            gap_levels.append(max((move.level for move in packed), default=-1) + 1)
+            grid_moves.append(list(plan.moves))
+            gap_levels.append(plan.levels)
             break
         else:
             raise ValueError(f"solve_floorplan: corridor relief did not converge in channel {channel} of die {die_dims}")

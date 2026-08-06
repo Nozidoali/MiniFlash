@@ -240,7 +240,7 @@ def apply_orientation(floorplan, cell_types, channels):
     :returns: (floorplan, cell_types, channels) — rebuilt copies.
     """
     from .floorplan import Floorplan
-    from .solver1d import solve_channel
+    from .channel import Lane as ChannelLane, RearrangementChannel, solve as solve_rearrangement
 
     num_layers = len(cell_types)
     if floorplan.die_dims is not None or num_layers == 0:
@@ -325,9 +325,10 @@ def apply_orientation(floorplan, cell_types, channels):
             after = dict(in_cols[index + 1])
             after.update(lanes[index + 1])
             scratch = max([*before.values(), *after.values(), widths[index]]) + 1
-            solved_moves, solved_gap = solve_channel(before, after, scratch)
-            moves.append(solved_moves)
-            gap_levels.append(solved_gap)
+            channel_lanes = {qubit: ChannelLane(start=(0, before[qubit]), end=(0, after[qubit])) for qubit in before if qubit in after}
+            plan = solve_rearrangement(RearrangementChannel(lanes=channel_lanes, scratch=((0, scratch),)))
+            moves.append(list(plan.moves))
+            gap_levels.append(plan.levels)
         else:
             moves.append(list(floorplan.moves[boundary]))
             gap_levels.append(floorplan.gap_levels[boundary])

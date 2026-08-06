@@ -10,8 +10,8 @@ This module holds the shared move types (:class:`Move`,
 :class:`SideMove`, :class:`GridMove`), the packing helpers, the
 :func:`solve_floorplan` dispatcher and injection placement
 (:func:`place_injections`). The concrete solvers live in
-:mod:`miniflash.solver1d` (column-stable 1-D) and
-:mod:`miniflash.solver2d` (slot-stable die mode).
+:mod:`miniflash.placement1d` (column-stable 1-D) and
+:mod:`miniflash.placement2d` (slot-stable die mode).
 """
 from dataclasses import dataclass, field
 
@@ -124,75 +124,7 @@ class InjectionPoint:
     level: int = -1
 
 
-def _sequence_moves(raw_moves, scratch_column):
-    """Order channel moves vacate-before-occupy; break permutation cycles via the scratch column."""
-    num_moves = len(raw_moves)
-    vacater_of_column = {from_column: index for index, (_, from_column, _) in enumerate(raw_moves)}
-    successor = {}
-    for index, (_, _, to_column) in enumerate(raw_moves):
-        vacater = vacater_of_column.get(to_column)
-        if vacater is not None and vacater != index:
-            successor[vacater] = index
-    has_predecessor = set(successor.values())
 
-    ordered = []
-    visited = set()
-    for start in range(num_moves):
-        if start in visited or start in has_predecessor:
-            continue
-        index = start
-        while index is not None and index not in visited:
-            visited.add(index)
-            ordered.append(raw_moves[index])
-            index = successor.get(index)
-
-    for start in range(num_moves):
-        if start in visited:
-            continue
-        cycle = []
-        index = start
-        while index not in visited:
-            visited.add(index)
-            cycle.append(index)
-            index = successor[index]
-        qubit, from_column, to_column = raw_moves[start]
-        ordered.append((qubit, from_column, scratch_column))
-        for member in cycle[1:]:
-            ordered.append(raw_moves[member])
-        ordered.append((qubit, scratch_column, to_column))
-
-    return ordered
-
-
-def _column_precedence(ordered_moves, columns_of):
-    """Predecessor sets so moves touching a shared column keep their sequence order."""
-    predecessors = [set() for _ in ordered_moves]
-    last_by_column = {}
-    for index, move in enumerate(ordered_moves):
-        for column in columns_of(move):
-            if column in last_by_column:
-                predecessors[index].add(last_by_column[column])
-            last_by_column[column] = index
-    return predecessors
-
-
-def _left_edge(ordered_moves, key_of, conflicts, predecessors):
-    """Left-edge greedy level packing under conflict and precedence constraints."""
-    levels = [None] * len(ordered_moves)
-    unplaced = set(range(len(ordered_moves)))
-    level = 0
-    while unplaced:
-        placed_now = []
-        for index in sorted(unplaced, key=key_of):
-            if any(levels[predecessor] is None or levels[predecessor] >= level for predecessor in predecessors[index]):
-                continue
-            if any(conflicts(index, other) for other in placed_now):
-                continue
-            levels[index] = level
-            placed_now.append(index)
-        unplaced -= set(placed_now)
-        level += 1
-    return levels
 
 
 def passthrough_floorplan(num_qubits, with_magic=False):
@@ -337,11 +269,11 @@ def solve_floorplan(member_sets, num_qubits, side_ports=False, with_magic=False,
         raise ValueError("solve_floorplan: no layers")
     layers = _normalize_layers(member_sets)
     if die_dims is not None:
-        from .solver2d import solve_2d
+        from .placement2d import solve_2d
 
         if side_ports:
             raise ValueError("solve_floorplan: side_ports requires single-row (die_dims=None) mode")
         return solve_2d(layers, num_qubits, die_dims, with_magic)
-    from .solver1d import solve_1d
+    from .placement1d import solve_1d
 
     return solve_1d(layers, num_qubits, side_ports, with_magic)

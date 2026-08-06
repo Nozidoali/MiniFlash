@@ -12,6 +12,7 @@ magic-state volume. The layout dict carries the volume metrics
 import base64
 import json
 import struct
+from types import SimpleNamespace
 
 from .floorplan import INJECTION_BANDWIDTH
 from .synthesis import AXIS_INDEX, STRIDE
@@ -24,41 +25,29 @@ def _make_pipe(low, high, axis, parity):
 
 
 def _emit_straight_run(pipes, column, plane_j, z_start, z_end, parity_bit):
-    """Vertical wire run at column from z_start to z_end."""
     for z in range(z_start, z_end, STRIDE):
         pipes.append(_make_pipe([column, plane_j, z], [column, plane_j, z + STRIDE], "K", parity_bit))
 
 
 def _emit_flip_landing(pipes, column, z_start, z_bottom, parity_bit):
-    """Wire landing that absorbs a pending Hadamard (color flip) before z_bottom."""
     _emit_straight_run(pipes, column, WIRE_J, z_start, z_bottom - STRIDE, parity_bit)
     hadamard = _make_pipe([column, WIRE_J, z_bottom - STRIDE], [column, WIRE_J, z_bottom], "K", parity_bit)
     hadamard["hadamard"] = True
     pipes.append(hadamard)
 
 
-def _emit_move_chain(pipes, chain, z_top, z_bottom, parity_bit, flip_at_end=False):
-    """One qubit's channel jogs (straight run, J-hop, I-run, J-hop per move); chain is level-ordered."""
-    column = chain[0].from_column * STRIDE
-    z_previous = z_top
-    hop_bit = 1 - parity_bit
-    for move in chain:
-        jog_z = z_top + (move.level + 1) * STRIDE
-        _emit_straight_run(pipes, column, WIRE_J, z_previous, jog_z, parity_bit)
-        plane_j = move.plane * STRIDE
-        pipes.append(_make_pipe([column, min(WIRE_J, plane_j), jog_z], [column, max(WIRE_J, plane_j), jog_z], "J", hop_bit))
-        next_column = move.to_column * STRIDE
-        step = STRIDE if next_column > column else -STRIDE
-        for i in range(column, next_column, step):
-            low, high = sorted((i, i + step))
-            pipes.append(_make_pipe([low, plane_j, jog_z], [high, plane_j, jog_z], "I", parity_bit))
-        pipes.append(_make_pipe([next_column, min(WIRE_J, plane_j), jog_z], [next_column, max(WIRE_J, plane_j), jog_z], "J", hop_bit))
-        column, z_previous = next_column, jog_z
+def _emit_channel_cell(pipes, nets, bits, z_top, z_bottom):
+    from .channel import Lane, RearrangementChannel, RearrangementPlan, plan_blocks
+    from .floorplan import Move
 
-    if flip_at_end:
-        _emit_flip_landing(pipes, column, z_previous, z_bottom, parity_bit)
-    else:
-        _emit_straight_run(pipes, column, WIRE_J, z_previous, z_bottom, parity_bit)
+    lanes = {}
+    for net in nets:
+        parity_in = bits.get(net.qubit, 0)
+        lanes[net.qubit] = Lane(start=(0, net.source[2]), end=(0, net.sink[2]), parity_in=parity_in, parity_out=0 if net.flip else parity_in)
+    moves = tuple(Move(qubit=net.qubit, from_column=from_column, to_column=to_column, level=level, plane=plane) for net in nets for level, from_column, to_column, plane in net.path)
+    plan = RearrangementPlan(channel=RearrangementChannel(lanes=lanes), moves=moves, levels=0)
+    blocks = plan_blocks(plan, z_bottom - z_top)
+    _emit_cell_pipes(pipes, SimpleNamespace(blocks=blocks), z_top)
 
 
 def _make_side_pipe(low, high, axis, parity):
@@ -76,7 +65,6 @@ def _emit_side_face_run(pipes, face_cube, hop_cube, z_port, parity_bit, flip):
 
 
 def _emit_side_exit(pipes, face_cube, hop_cube, lane_cube, plane_j, z_port, z_bottom, parity_bit):
-    """Park move through a cell side face out to its lane column."""
     _emit_side_face_run(pipes, face_cube, hop_cube, z_port, parity_bit, False)
     hop_bit = 1 - parity_bit
     pipes.append(_make_side_pipe([hop_cube, min(WIRE_J, plane_j), z_port], [hop_cube, max(WIRE_J, plane_j), z_port], "J", hop_bit))
@@ -88,7 +76,6 @@ def _emit_side_exit(pipes, face_cube, hop_cube, lane_cube, plane_j, z_port, z_bo
 
 
 def _emit_side_entry(pipes, face_cube, hop_cube, lane_cube, plane_j, z_start, z_port, parity_bit, flip):
-    """Unpark move from a lane column into a cell side face."""
     hop_bit = 1 - parity_bit
     for z in range(z_start, z_port, STRIDE):
         pipes.append(_make_side_pipe([lane_cube, WIRE_J, z], [lane_cube, WIRE_J, z + STRIDE], "K", parity_bit))
@@ -100,7 +87,6 @@ def _emit_side_entry(pipes, face_cube, hop_cube, lane_cube, plane_j, z_start, z_
 
 
 def _emit_cell_pipes(pipes, cell, z_offset, x_offset=0, y_offset=0):
-    """A synthesized cell's blocks translated to its die offsets."""
     for block in cell.blocks:
         if block["kind"] not in ("pipe", "hadamard"):
             continue
@@ -125,30 +111,26 @@ def _emit_j_run(pipes, x, y_start, y_end, z, parity_bit):
 
 
 def _wire_y(row):
-    """J coordinate of a row's wire plane."""
     return row * ROW_PITCH + WIRE_J
 
 
 def _grid_waypoints(move):
     (row_a, col_a), (row_b, col_b) = move.src, move.dst
-    corridor = next((seg[1] for seg in move.path if seg[0] == "J"), col_b)
     points = [(col_a, _wire_y(row_a))]
-    if row_a == row_b:
-        plane = row_a * ROW_PITCH + (2 * STRIDE if col_b > col_a else 0)
-        points += [(col_a, plane), (col_b, plane)]
-    else:
-        if corridor != col_a:
-            plane = row_a * ROW_PITCH + (2 * STRIDE if corridor > col_a else 0)
-            points += [(col_a, plane), (corridor, plane)]
-        if corridor != col_b:
-            plane = row_b * ROW_PITCH + (2 * STRIDE if col_b > corridor else 0)
-            points += [(corridor, plane), (col_b, plane)]
+    column = col_a
+    for segment in move.path:
+        if segment[0] != "I":
+            continue
+        _, row, plane, low, high = segment
+        j = row * ROW_PITCH + plane * STRIDE
+        target = low if column == high else high
+        points += [(column, j), (target, j)]
+        column = target
     points.append((col_b, _wire_y(row_b)))
     return [point for index, point in enumerate(points) if index == 0 or point != points[index - 1]]
 
 
 def _emit_grid_path(pipes, move, jog_z, parity_bit):
-    """Die-mode 2-D grid move (I/J segments at jog_z)."""
     hop_bit = 1 - parity_bit
     points = _grid_waypoints(move)
     for (col_a, y_a), (col_b, y_b) in zip(points, points[1:]):
@@ -162,7 +144,6 @@ def _emit_grid_path(pipes, move, jog_z, parity_bit):
 
 
 def _emit_die_injection(pipes, column, row, width, z0, parity_bit, slot=0):
-    """Die-mode injection crossbar at z0 spanning the row width."""
     z_zz = z0 + STRIDE
     data_cube = column * STRIDE
     plane = row * ROW_PITCH + (2 * STRIDE if slot == 0 else 0)
@@ -184,7 +165,6 @@ def _make_t_pipe(low, high, axis, parity):
 
 
 def _emit_injection(pipes, column, magic_column, z0, parity_bit, slot=0):
-    """1-D injection crossbar from column to the magic lane at z0."""
     data_cube = column * STRIDE
     magic_cube = (magic_column + 2 * slot) * STRIDE
     z_zz = z0 + STRIDE
@@ -283,7 +263,7 @@ def build_layout(program):
     if problems:
         raise RuntimeError(f"build_layout: IR check failed: {problems[:3]}")
 
-    from .floorplan import GridMove, Move
+    from .floorplan import GridMove
 
     num_layers = len(program.box_widths)
     die_dims = program.die_dims
@@ -392,11 +372,13 @@ def build_layout(program):
         z_bottom = z_offsets[channel + 1]
         bits = bits_at(channel)
 
-        for net in program.nets:
-            if net.channel != channel:
-                continue
-            parity = bits.get(net.qubit, 0)
-            if die_dims is not None:
+        if die_dims is None:
+            _emit_channel_cell(pipes, [net for net in program.nets if net.channel == channel], bits, z_top, z_bottom)
+        else:
+            for net in program.nets:
+                if net.channel != channel:
+                    continue
+                parity = bits.get(net.qubit, 0)
                 z_previous = z_top
                 slot = net.source[1:]
                 for level, src, dst, *segments in net.path:
@@ -408,15 +390,6 @@ def build_layout(program):
                     _emit_flip_landing(pipes, slot[1] * STRIDE, z_previous, z_bottom, parity)
                 else:
                     _emit_straight_run(pipes, slot[1] * STRIDE, _wire_y(slot[0]), z_previous, z_bottom, parity)
-            elif net.path:
-                chain = [Move(qubit=net.qubit, from_column=from_column, to_column=to_column, level=level, plane=plane) for level, from_column, to_column, plane in net.path]
-                _emit_move_chain(pipes, chain, z_top, z_bottom, parity, flip_at_end=net.flip)
-            else:
-                column = net.source[2]
-                if net.flip:
-                    _emit_flip_landing(pipes, column * STRIDE, z_top, z_bottom, parity)
-                else:
-                    _emit_straight_run(pipes, column * STRIDE, WIRE_J, z_top, z_bottom, parity)
 
         for index in in_gap_by_boundary.get(channel, ()):
             macro = injections[index]
