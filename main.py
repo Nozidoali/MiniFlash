@@ -12,7 +12,7 @@ from pathlib import Path
 import miniflash as flash
 
 
-def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=False, factory="15-to-1", die_dims=None, factories=1, budget_s=600, orientation=False):
+def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=False, factory="15-to-1", die_dims=None, factories=1, budget_s=600, orientation=False, use_sat=False):
     """Compile a circuit to the Program IR: parse -> partition -> synthesize -> elaborate.
 
     Partitioning is coarse-first: regions start at whole-circuit granularity
@@ -27,6 +27,8 @@ def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=Fa
     :param die_dims: (width, rows | None) or None for 1-D.
     :param factories: int, magic state factory units.
     :param budget_s: int, processing budget in seconds per region.
+    :param use_sat: bool, SAT-solve uncached regions; False (default) serves
+        cache hits and templates everything else.
     :param orientation: bool, lay deep cells down when that shortens their layer (1-D only).
     :returns: Program.
     """
@@ -43,7 +45,7 @@ def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=Fa
     rung_of = {id(region): 0 for region in regions}
     while True:
         try:
-            floorplan, cells, channels = flash.synthesize(partitioned, cache_dir=cache_dir, side_ports=side_ports, die_dims=die_dims, budget_s=budget_s, orientation=orientation)
+            floorplan, cells, channels = flash.synthesize(partitioned, cache_dir=cache_dir, side_ports=side_ports, die_dims=die_dims, budget_s=budget_s, orientation=orientation, use_sat=use_sat)
             break
         except RuntimeError as error:
             failed = getattr(error, "region", None)
@@ -79,6 +81,7 @@ def main():
     parser.add_argument("--factories",         type=int, default=1,                                      help="factory units (die mode)")
     parser.add_argument("--dump-ir",           action="store_true",                                      help="also write <out>.program.json")
     parser.add_argument("--budget",            type=int, default=600,                                    help="per-region processing seconds")
+    parser.add_argument("--use-sat",           action="store_true",                                      help="SAT-solve uncached regions (default: cached cells + templates only)")
     arguments = parser.parse_args()
 
     die_dims = (arguments.die_dims[0], arguments.die_dims[1] or None) if arguments.die_dims else None
@@ -92,6 +95,7 @@ def main():
         factories=arguments.factories,
         budget_s=arguments.budget,
         orientation=arguments.orientation,
+        use_sat=arguments.use_sat,
     )
 
     gltf_path = Path(arguments.out)

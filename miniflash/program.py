@@ -237,6 +237,20 @@ def _slots(floorplan, layer, use_out):
     return slots
 
 
+def _assert_hadamard_ledger(floorplan, placements, exit_bits):
+    for layer in range(len(placements)):
+        arriving = exit_bits[layer - 1] if layer else {}
+        for cell, (_, _, box_qubits) in placements[layer]:
+            if cell.in_bases is None:
+                continue
+            qubits = box_qubits if box_qubits is not None else sorted(floorplan.in_port_columns[layer])
+            for qubit in qubits:
+                if qubit not in floorplan.in_port_columns[layer]:
+                    continue
+                if cell.in_bases.get(qubit, 0) != arriving.get(qubit, 0):
+                    raise RuntimeError(f"elaborate: hadamard ledger mismatch at layer {layer}, qubit {qubit}: wire delivers bit {arriving.get(qubit, 0)} but the cell was synthesized against in_bases {cell.in_bases.get(qubit, 0)} — flip landings and cell compensation have diverged")
+
+
 def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, factories=1):
     """Fuse the floorplan, synthesized cells and injections into the Program IR.
 
@@ -253,6 +267,7 @@ def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, fact
     placements = _normalized_placements(floorplan, layer_cells)
     num_layers = len(placements)
     exit_bits = _parity_ledger(floorplan, placements)
+    _assert_hadamard_ledger(floorplan, placements, exit_bits)
 
     macros = []
     for layer in range(num_layers):

@@ -66,6 +66,8 @@ class Cell:
     blocks: list
     #: Pauli correction carried by this instance (recomputed per use)
     pauli_frame: str = "I"
+    #: {qubit: 0|1} entry basis this instance was synthesized against (recomputed per use; None = unknown)
+    in_bases: dict = None
 
     @classmethod
     def from_dict(cls, data):
@@ -648,11 +650,13 @@ def _requires_y(region, in_bases):
     return any(_pauli_parts(dual)[1].count("Y") % 2 for dual in duals)
 
 
-def _cache_key(region, in_columns=None, out_columns=None, in_bases=None, side_entry_slots=None, side_exit_slots=None, forbid_y=False):
+def _cache_key(region, in_columns=None, out_columns=None, in_bases=None, side_entry_slots=None, side_exit_slots=None, forbid_y=False, clear_wire_row=False):
     duals = _dual_stabilizers(_effective_gates(region, in_bases), len(region.qubits))
     parts = [len(region.qubits), tuple(_pauli_parts(dual)[1].replace("_", "I") for dual in duals)]
     if forbid_y:
         parts.append(("forbid_y", True))
+    if clear_wire_row:
+        parts.append(("clear_wire_row", True))
     if in_columns is not None:
         parts.append(("in_cols", [in_columns.get(qubit, -1) for qubit in region.qubits]))
     if out_columns is not None:
@@ -791,7 +795,7 @@ def _unsigned_stabilizers_and_fixup(duals):
     return bodies, fixup
 
 
-def _build_spec(num_qubits, stabilizers, depth, in_pin_names, out_pin_names, in_columns=None, out_columns=None, side_in_slots=None, side_out_slots=None, forbid_y=False):
+def _build_spec(num_qubits, stabilizers, depth, in_pin_names, out_pin_names, in_columns=None, out_columns=None, side_in_slots=None, side_out_slots=None, forbid_y=False, clear_wire_row=False):
     in_columns = in_columns if in_columns is not None else [index + 1 for index in range(num_qubits)]
     out_columns = out_columns if out_columns is not None else [index + 1 for index in range(num_qubits)]
     side_in_slots = side_in_slots if side_in_slots is not None else {}
@@ -815,9 +819,16 @@ def _build_spec(num_qubits, stabilizers, depth, in_pin_names, out_pin_names, in_
     side_locations = [tuple(port["location"]) for port in ports if port["direction"] == "-I"]
     if len(side_locations) != len(set(side_locations)):
         return None
-    spec = {"max_i": num_qubits + 2, "max_j": 3, "max_k": depth, "ports": ports, "stabilizers": stabilizers}
+    box_width = max(num_qubits + 2, max(list(in_columns) + list(out_columns)) + 2)
+    spec = {"max_i": box_width, "max_j": 3, "max_k": depth, "ports": ports, "stabilizers": stabilizers}
+    optional = {}
     if forbid_y:
-        spec["optional"] = {"forbid_y_cubes": True}
+        optional["forbid_y_cubes"] = True
+    if clear_wire_row:
+        occupied_columns = set(in_columns) | set(out_columns)
+        optional["forbidden_cubes"] = [[column, 1, k] for column in range(box_width) if column not in occupied_columns for k in range(depth)]
+    if optional:
+        spec["optional"] = optional
     return spec
 
 
@@ -825,7 +836,7 @@ def _hard_wall(signum, frame):
     raise SynthTimeout("synthesize: hard wall — solver attempt exceeded the budget")
 
 
-def _solve_region(local_gates, num_qubits, in_pin_names, out_pin_names, min_depth=2, max_depth=16, solver=None, in_columns=None, out_columns=None, side_in_slots=None, side_out_slots=None, deadline=None, forbid_y=False):
+def _solve_region(local_gates, num_qubits, in_pin_names, out_pin_names, min_depth=2, max_depth=16, solver=None, in_columns=None, out_columns=None, side_in_slots=None, side_out_slots=None, deadline=None, forbid_y=False, clear_wire_row=False):
     duals = _dual_stabilizers(local_gates, num_qubits)
     stabilizers, fixup = _unsigned_stabilizers_and_fixup(duals)
     solver = solver if solver is not None else _default_solver()
@@ -842,7 +853,7 @@ def _solve_region(local_gates, num_qubits, in_pin_names, out_pin_names, min_dept
                     os.environ["MINIFLASH_KISSAT_TIME"] = saved_cap
                 raise SynthTimeout(f"synthesize: budget exhausted at depth {depth}, n={num_qubits} qubits")
             os.environ["MINIFLASH_KISSAT_TIME"] = str(max(1, int(remaining)))
-        spec = _build_spec(num_qubits, stabilizers, depth, in_pin_names, out_pin_names, in_columns=in_columns, out_columns=out_columns, side_in_slots=side_in_slots, side_out_slots=side_out_slots, forbid_y=forbid_y)
+        spec = _build_spec(num_qubits, stabilizers, depth, in_pin_names, out_pin_names, in_columns=in_columns, out_columns=out_columns, side_in_slots=side_in_slots, side_out_slots=side_out_slots, forbid_y=forbid_y, clear_wire_row=clear_wire_row)
         if spec is None:
             continue
 
@@ -851,8 +862,10 @@ def _solve_region(local_gates, num_qubits, in_pin_names, out_pin_names, min_dept
                 previous_handler = signal.signal(signal.SIGALRM, _hard_wall)
                 signal.setitimer(signal.ITIMER_REAL, max(0.5, remaining))
             solution = synthesizer.solve(specification=spec, print_detail=False)
-        except ValueError as error:
-            if "return code" not in str(error):
+        except Exception as error:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise SynthTimeout("synthesize: hard wall — solver attempt exceeded the budget") from None
+            if not (isinstance(error, ValueError) and "return code" in str(error)):
                 raise
             solution = None
         finally:
@@ -879,7 +892,7 @@ def _solve_region(local_gates, num_qubits, in_pin_names, out_pin_names, min_dept
     raise SynthUnsat(f"synthesize: no solution for depths {min_depth}..{max_depth} with {solver}, n={num_qubits} qubits, stabilizers={stabilizers}")
 
 
-def synthesize_region(region, cache_dir=".miniflash-cache", in_columns=None, out_columns=None, in_bases=None, side_entry_slots=None, side_exit_slots=None, budget_s=None, forbid_y=False) -> Cell:
+def synthesize_region(region, cache_dir=".miniflash-cache", in_columns=None, out_columns=None, in_bases=None, side_entry_slots=None, side_exit_slots=None, budget_s=None, forbid_y=False, clear_wire_row=False, use_sat=True) -> Cell:
     """SAT-synthesize (or load from disk cache) the lattice-surgery cell for one region.
 
     :param region: Region.
@@ -891,12 +904,16 @@ def synthesize_region(region, cache_dir=".miniflash-cache", in_columns=None, out
     :param side_exit_slots: {qubit: slot} side-face exit ports.
     :param budget_s: float | None, SAT budget in seconds.
     :param forbid_y: bool, demand a Y-free (rotatable) geometry.
+    :param clear_wire_row: bool, forbid the wire row (j=1) outside the
+        region's own columns, so spectator wires can pass straight through.
+    :param use_sat: bool, run the solver on a cache miss; False raises
+        SynthTimeout instead, so the caller's fallback takes over.
     :returns: Cell (pauli_frame set to the sign fixup).
     :raises SynthTimeout: on budget exhaustion (also when a .synthfail marker
-        records a timeout at >= this budget).
+        records a timeout at >= this budget, or on any miss with SAT disabled).
     :raises RuntimeError: on UNSAT or failed verification.
     """
-    key = _cache_key(region, in_columns, out_columns, in_bases, side_entry_slots, side_exit_slots, forbid_y=forbid_y)
+    key = _cache_key(region, in_columns, out_columns, in_bases, side_entry_slots, side_exit_slots, forbid_y=forbid_y, clear_wire_row=clear_wire_row)
     cache_root = Path(cache_dir)
     cache_path = cache_root / f"{key}.json"
     fail_path = cache_root / f"{key}.synthfail"
@@ -906,7 +923,10 @@ def synthesize_region(region, cache_dir=".miniflash-cache", in_columns=None, out
     if cache_path.exists():
         cell = Cell.from_dict(json.loads(cache_path.read_text()))
         _, cell.pauli_frame = _unsigned_stabilizers_and_fixup(_dual_stabilizers(local_gates, num_qubits))
+        cell.in_bases = dict(in_bases) if in_bases else {}
         return cell
+    if not use_sat:
+        raise SynthTimeout(f"synthesize: cache miss with SAT disabled, n={num_qubits} qubits")
     if budget_s and fail_path.exists():
         try:
             failed_budget = float(fail_path.read_text())
@@ -925,7 +945,7 @@ def synthesize_region(region, cache_dir=".miniflash-cache", in_columns=None, out
     deadline = time.monotonic() + budget_s if budget_s else None
 
     try:
-        lasre, fixup = _solve_region(local_gates, num_qubits, in_pin_names, out_pin_names, in_columns=in_column_list, out_columns=out_column_list, side_in_slots=side_in_slots, side_out_slots=side_out_slots, deadline=deadline, forbid_y=forbid_y)
+        lasre, fixup = _solve_region(local_gates, num_qubits, in_pin_names, out_pin_names, in_columns=in_column_list, out_columns=out_column_list, side_in_slots=side_in_slots, side_out_slots=side_out_slots, deadline=deadline, forbid_y=forbid_y, clear_wire_row=clear_wire_row)
     except SynthTimeout:
         if budget_s:
             cache_root.mkdir(parents=True, exist_ok=True)
@@ -938,10 +958,24 @@ def synthesize_region(region, cache_dir=".miniflash-cache", in_columns=None, out
     temporary_path.write_text(json.dumps(cell.to_dict()))
     temporary_path.replace(cache_path)
     cell.pauli_frame = fixup
+    cell.in_bases = dict(in_bases) if in_bases else {}
     return cell
 
 
-def synthesize(partitioned, cache_dir=".miniflash-cache", side_ports=False, die_dims=None, budget_s=None, orientation=False):
+def _template_fallback(region, error, in_columns, out_columns, in_bases, side_entry_slots, side_exit_slots):
+    if side_entry_slots or side_exit_slots or in_columns != out_columns:
+        error.region = region
+        raise error
+    from .template import template_cell
+
+    try:
+        return template_cell(region, in_columns=in_columns, in_bases=in_bases)
+    except ValueError:
+        error.region = region
+        raise error
+
+
+def synthesize(partitioned, cache_dir=".miniflash-cache", side_ports=False, die_dims=None, budget_s=None, orientation=False, use_sat=False):
     """Run the synthesis stage for a whole circuit: schedule, floorplan, then every cell.
 
     Threads the wire parity ledger between cells (a cell's out-pin parities become
@@ -953,10 +987,19 @@ def synthesize(partitioned, cache_dir=".miniflash-cache", side_ports=False, die_
     :param side_ports: bool, swap through cell side faces.
     :param die_dims: (width, rows | None) or None for 1-D.
     :param budget_s: float | None, SAT budget in seconds per region.
+    :param use_sat: bool, solve uncached regions with SAT; False (default)
+        serves cache hits and templates everything else.
     :param orientation: bool, lay cells down (90-degree I-K rotation plus
         pin elbows) when that shortens the layout — chains of consecutive
         same-column layers fuse into one thin band, singles lie alone when
         ``depth > n+2``; 1-D only.
+
+    A region whose whole-cell SAT attempt exhausts its budget falls back
+    to :func:`miniflash.template.template_cell` — deterministic per-gate
+    block patterns stacked serially along K, no solver — keeping the
+    region one cell in one layer; the error propagates only when the
+    template path is unavailable (side ports, reordered out columns,
+    a gate without a template).
     :returns: (floorplan, cell_types, channels) — everything elaborate consumes.
     :raises SynthTimeout | SynthUnsat: from the failing region, with ``.region`` set.
     """
@@ -989,16 +1032,15 @@ def synthesize(partitioned, cache_dir=".miniflash-cache", side_ports=False, die_
             in_bases = {qubit: wire_bits[qubit] for qubit in region.qubits}
             try:
                 forbid_y = layer in chain_layers and not _requires_y(region, in_bases)
-                cell = synthesize_region(region, cache_dir=str(cache_dir), in_columns=in_columns, out_columns=out_columns, in_bases=in_bases, side_entry_slots=side_entry_slots, side_exit_slots=side_exit_slots, budget_s=budget_s, forbid_y=forbid_y)
+                cell = synthesize_region(region, cache_dir=str(cache_dir), in_columns=in_columns, out_columns=out_columns, in_bases=in_bases, side_entry_slots=side_entry_slots, side_exit_slots=side_exit_slots, budget_s=budget_s, forbid_y=forbid_y, use_sat=use_sat)
             except (SynthTimeout, SynthUnsat) as error:
-                if not forbid_y:
-                    error.region = region
-                    raise
-                try:
-                    cell = synthesize_region(region, cache_dir=str(cache_dir), in_columns=in_columns, out_columns=out_columns, in_bases=in_bases, side_entry_slots=side_entry_slots, side_exit_slots=side_exit_slots, budget_s=budget_s)
-                except (SynthTimeout, SynthUnsat) as fallback_error:
-                    fallback_error.region = region
-                    raise
+                if forbid_y:
+                    try:
+                        cell = synthesize_region(region, cache_dir=str(cache_dir), in_columns=in_columns, out_columns=out_columns, in_bases=in_bases, side_entry_slots=side_entry_slots, side_exit_slots=side_exit_slots, budget_s=budget_s, use_sat=use_sat)
+                    except (SynthTimeout, SynthUnsat) as retry_error:
+                        cell = _template_fallback(region, retry_error, in_columns, out_columns, in_bases, side_entry_slots, side_exit_slots)
+                else:
+                    cell = _template_fallback(region, error, in_columns, out_columns, in_bases, side_entry_slots, side_exit_slots)
 
             layer_cells.append(cell)
             ledger_boxes.append([out_columns, side_exit_slots])
