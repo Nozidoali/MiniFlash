@@ -99,9 +99,6 @@ class GridMove:
     path: tuple
 
 
-INJECTION_BANDWIDTH = 2
-
-
 @dataclass(frozen=True)
 class InjectionPoint:
     """A placed T injection: which channel it fires in and where its crossbar sits."""
@@ -116,7 +113,7 @@ class InjectionPoint:
     column: int
     #: die row (die mode)
     row: int = 0
-    #: production round within the channel (:data:`INJECTION_BANDWIDTH` per round)
+    #: production round within the channel
     round: int = 0
     #: crossbar slot within the round (0 | 1)
     slot: int = 0
@@ -134,8 +131,7 @@ def passthrough_floorplan(num_qubits, with_magic=False):
     :param with_magic: bool, reserve an extra magic-state column.
     :returns: Floorplan with zero layers.
     """
-    magic_column = num_qubits + 1 if with_magic else None
-    return Floorplan(num_qubits=num_qubits, box_widths=[], in_port_columns=[], out_port_columns=[], lane_columns=[], moves=[], gap_levels=[], magic_column=magic_column)
+    return Floorplan(num_qubits=num_qubits, box_widths=[], in_port_columns=[], out_port_columns=[], lane_columns=[], moves=[], gap_levels=[], magic_column=None)
 
 
 def _die_slot(floorplan, layer, qubit, use_out):
@@ -146,60 +142,33 @@ def _die_slot(floorplan, layer, qubit, use_out):
     return floorplan.parked_slots[layer][qubit]
 
 
-def _in_gap_level(floorplan, boundary, column, slot_count, occupied, slot_levels, qubit_floor):
-    if floorplan.die_dims is not None:
-        reach = [floorplan.die_dims[0] - 1] * slot_count
-        spacing = 1
-    else:
-        reach = [floorplan.magic_column + 2 * slot for slot in range(slot_count)]
-        spacing = 2
-
-    level = qubit_floor
-    while True:
-        for slot in range(slot_count):
-            plane = 2 if slot == 0 else 0
-            low, high = min(column, reach[slot]), max(column, reach[slot])
-            if any(abs(level - used) < spacing for used in slot_levels.get((boundary, slot), ())):
-                continue
-            if any(used_plane == plane and not (high < used_low or used_high < low) for used_level, used_plane, used_low, used_high in occupied.get(boundary, ()) if used_level == level):
-                continue
-            return level, slot, (low, high, plane)
-        level += 1
-
-
 def place_injections(events, channels, floorplan, factory=None, factories=1):
-    """Pin each injection event to a slot; pack it into the channel gap when possible.
+    """Pack injection events into per-(channel, row) rounds of backside stubs.
 
-    Interior-channel injections on unmoved qubits ride existing gap levels
-    (level >= 0: crossbar packed with the jogs, per-slot spacing 2, gap_levels
-    grown as needed) when the factory is cultivation-fast (interval_k <= 2).
-    Everything else — head/tail channels, die mode, moved qubits, slow factories —
-    keeps the block path (level == -1, grouped by round, <= INJECTION_BANDWIDTH).
+    Every qubit column owns a private backside delivery, so round capacity is
+    bounded only by the row's factory units (and same-qubit serialization) —
+    there is no corridor bandwidth. Units split evenly across die rows when
+    there are enough; otherwise all rows share the pool.
 
     :param events: list[InjectionEvent].
     :param channels: list[int] from schedule_layers, parallel to events.
     :param floorplan: Floorplan.
     :param factory: FactorySpec | None.
-    :param factories: int, factory units.
+    :param factories: int, factory units (machine total).
     :returns: list[InjectionPoint].
     """
     num_layers = len(floorplan.box_widths)
-    bandwidth = INJECTION_BANDWIDTH
-    fast_factory = factory is not None and factory.interval_k <= 2
-    slot_count = min(INJECTION_BANDWIDTH, max(1, factories))
+    supply = max(1, factories)
+    if factory is not None and floorplan.die_dims is not None and floorplan.rows > 1 and factories < floorplan.rows:
+        raise ValueError("place_injections: backside supply needs at least one factory unit per die row")
+    row_supply = {}
+    if factory is not None and floorplan.die_dims is not None and floorplan.rows > 1 and factories >= floorplan.rows:
+        per_row, extra = divmod(factories, floorplan.rows)
+        row_supply = {r: per_row + (1 if r < extra else 0) for r in range(floorplan.rows)}
     points = []
     last_round = {}
     round_sizes = {}
-    occupied = {}
-    slot_levels = {}
-    qubit_floor = {}
-
-    if floorplan.die_dims is not None:
-        for boundary in range(len(floorplan.grid_moves)):
-            occupied[boundary] = [(gm.level, seg[2], seg[3], seg[4]) for gm in floorplan.grid_moves[boundary] for seg in gm.path if seg[0] == "I"]
-    else:
-        for boundary in range(len(floorplan.moves)):
-            occupied[boundary] = [(move.level, move.plane, min(move.from_column, move.to_column), max(move.from_column, move.to_column)) for move in floorplan.moves[boundary]]
+    round_totals = {}
 
     for event, channel in zip(events, channels):
         row = 0
@@ -213,36 +182,19 @@ def place_injections(events, channels, floorplan, factory=None, factories=1):
         else:
             column = floorplan.out_port_columns[-1].get(event.qubit, floorplan.lane_columns[-1].get(event.qubit, event.qubit + 1))
 
-        boundary = channel - 1
-        if floorplan.die_dims is not None:
-            movers = floorplan.grid_moves[boundary] if 0 <= boundary < len(floorplan.grid_moves) else ()
-            in_gap = (fast_factory and floorplan.rows == 1 and 1 <= channel <= num_layers - 1
-                      and not any(gm.qubit == event.qubit for gm in movers))
-        else:
-            in_gap = (fast_factory and 1 <= channel <= num_layers - 1
-                      and not any(move.qubit == event.qubit for move in floorplan.moves[boundary]))
-
-        if in_gap:
-            floor = qubit_floor.get((boundary, event.qubit), 0)
-            level, slot, span = _in_gap_level(floorplan, boundary, column, slot_count, occupied, slot_levels, floor)
-            occupied[boundary].append((level, span[2], span[0], span[1]))
-            slot_levels.setdefault((boundary, slot), []).append(level)
-            qubit_floor[(boundary, event.qubit)] = level + 1
-            floorplan.gap_levels[boundary] = max(floorplan.gap_levels[boundary], level + 1)
-            points.append(InjectionPoint(qubit=event.qubit, dagger=event.dagger, channel=channel, column=column, row=row, slot=slot, level=level))
-            continue
-
+        row_cap = row_supply.get(row, supply) if factory is not None else supply
         start = last_round.get((channel, event.qubit), -1) + 1
         round_index = start
-        while round_sizes.get((channel, round_index), 0) >= bandwidth:
+        while (round_sizes.get((channel, row, round_index), 0) >= row_cap
+               or (not row_supply and factory is not None and round_totals.get((channel, round_index), 0) >= supply)):
             round_index += 1
-        slot = round_sizes.get((channel, round_index), 0)
-        round_sizes[(channel, round_index)] = slot + 1
+        slot = round_sizes.get((channel, row, round_index), 0)
+        round_sizes[(channel, row, round_index)] = slot + 1
+        round_totals[(channel, round_index)] = round_totals.get((channel, round_index), 0) + 1
         last_round[(channel, event.qubit)] = round_index
         points.append(InjectionPoint(qubit=event.qubit, dagger=event.dagger, channel=channel, column=column, row=row, round=round_index, slot=slot))
 
     return points
-
 
 def _normalize_layers(member_sets):
     layers = []

@@ -245,7 +245,7 @@ def apply_orientation(floorplan, cell_types, channels):
     num_layers = len(cell_types)
     if floorplan.die_dims is not None or num_layers == 0:
         return floorplan, cell_types, list(channels)
-    width_cap = floorplan.magic_column
+    width_cap = floorplan.magic_column  # None = unbounded (no magic strip anymore)
     blocked = set(channels)
 
     def eligible(layer):

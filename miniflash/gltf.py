@@ -14,7 +14,6 @@ import json
 import struct
 from types import SimpleNamespace
 
-from .floorplan import INJECTION_BANDWIDTH
 from .synthesis import AXIS_INDEX, STRIDE
 
 WIRE_J = STRIDE
@@ -103,6 +102,12 @@ def _emit_cell_pipes(pipes, cell, z_offset, x_offset=0, y_offset=0):
 
 INJECTION_BLOCK_LEVELS = 2
 ROW_PITCH = 6
+_ROW_BASES = [[]]  # per-row J bases (band + per-row bank pitch), set by build_layout
+
+
+def _row_base(row):
+    bases = _ROW_BASES[0]
+    return bases[row] if row < len(bases) else row * ROW_PITCH
 
 
 def _emit_j_run(pipes, x, y_start, y_end, z, parity_bit):
@@ -111,7 +116,7 @@ def _emit_j_run(pipes, x, y_start, y_end, z, parity_bit):
 
 
 def _wire_y(row):
-    return row * ROW_PITCH + WIRE_J
+    return _row_base(row) + WIRE_J
 
 
 def _grid_waypoints(move):
@@ -122,7 +127,7 @@ def _grid_waypoints(move):
         if segment[0] != "I":
             continue
         _, row, plane, low, high = segment
-        j = row * ROW_PITCH + plane * STRIDE
+        j = _row_base(row) + plane * STRIDE
         target = low if column == high else high
         points += [(column, j), (target, j)]
         column = target
@@ -143,39 +148,25 @@ def _emit_grid_path(pipes, move, jog_z, parity_bit):
             _emit_j_run(pipes, col_a * STRIDE, y_a, y_b, jog_z, hop_bit)
 
 
-def _emit_die_injection(pipes, column, row, width, z0, parity_bit, slot=0):
-    z_zz = z0 + STRIDE
-    data_cube = column * STRIDE
-    plane = row * ROW_PITCH + (2 * STRIDE if slot == 0 else 0)
-    hop_bit = 1 - parity_bit
-    for y in range(min(_wire_y(row), plane), max(_wire_y(row), plane), STRIDE):
-        pipe = _make_pipe([data_cube, y, z_zz], [data_cube, y + STRIDE, z_zz], "J", hop_bit)
-        pipe["t_volume"] = True
-        pipes.append(pipe)
-    for x in range(data_cube, width * STRIDE, STRIDE):
-        pipe = _make_pipe([x, plane, z_zz], [x + STRIDE, plane, z_zz], "I", parity_bit)
-        pipe["t_volume"] = True
-        pipes.append(pipe)
-
-
 def _make_t_pipe(low, high, axis, parity):
     pipe = _make_pipe(low, high, axis, parity)
     pipe["t_volume"] = True
     return pipe
 
 
-def _emit_injection(pipes, column, magic_column, z0, parity_bit, slot=0):
-    data_cube = column * STRIDE
-    magic_cube = (magic_column + 2 * slot) * STRIDE
+def _emit_backside(pipes, column, row, strip_j, bank_x, z0, parity_bit):
+    """One backside injection: merge stub at z_zz, K riser, z0 lane run to the bank."""
+    base = _row_base(row)
+    wire = base + WIRE_J
+    corridor = base + 2 * STRIDE
+    x_d = column * STRIDE
     z_zz = z0 + STRIDE
-    plane_j = 2 * STRIDE if slot == 0 else 0
-    hop_bit = 1 - parity_bit
-    pipes.append(_make_t_pipe([magic_cube, WIRE_J, z0], [magic_cube + STRIDE, WIRE_J, z0], "I", 0))
-    pipes.append(_make_t_pipe([magic_cube, WIRE_J, z0], [magic_cube, WIRE_J, z_zz], "K", 0))
-    pipes.append(_make_t_pipe([data_cube, min(WIRE_J, plane_j), z_zz], [data_cube, max(WIRE_J, plane_j), z_zz], "J", hop_bit))
-    for i in range(data_cube, magic_cube, STRIDE):
-        pipes.append(_make_t_pipe([i, plane_j, z_zz], [i + STRIDE, plane_j, z_zz], "I", parity_bit))
-    pipes.append(_make_t_pipe([magic_cube, min(WIRE_J, plane_j), z_zz], [magic_cube, max(WIRE_J, plane_j), z_zz], "J", hop_bit))
+    pipes.append(_make_t_pipe([x_d, wire, z_zz], [x_d, corridor, z_zz], "J", 1 - parity_bit))
+    pipes.append(_make_t_pipe([x_d, corridor, z0], [x_d, corridor, z_zz], "K", 0))
+    for j in range(corridor, strip_j, STRIDE):
+        pipes.append(_make_t_pipe([x_d, j, z0], [x_d, j + STRIDE, z0], "J", 0))
+    for i in range(x_d, bank_x, STRIDE):
+        pipes.append(_make_t_pipe([i, strip_j, z0], [i + STRIDE, strip_j, z0], "I", 0))
 
 
 def check_program(program):
@@ -238,14 +229,20 @@ def check_program(program):
     blocks = {}
     for macro in program.macros:
         if macro.kind == "injection" and macro.level < 0:
-            blocks.setdefault((macro.layer, macro.round), []).append(macro)
-    for (channel, round_index), members in blocks.items():
-        if len(members) > 2:
-            errors.append(f"injection block channel {channel} round {round_index}: {len(members)} members > bandwidth 2")
+            blocks.setdefault((macro.layer, macro.round, macro.row), []).append(macro)
+    factories_total = sum(1 for m in program.macros if m.kind == "factory")
+    rows_split = {}
+    if program.die_dims is not None and program.rows > 1 and factories_total >= program.rows:
+        per_row, extra = divmod(factories_total, program.rows)
+        rows_split = {r: per_row + (1 if r < extra else 0) for r in range(program.rows)}
+    for (channel, round_index, row), members in blocks.items():
+        cap = rows_split.get(row, max(1, factories_total))
+        if len(members) > cap:
+            errors.append(f"injection block channel {channel} round {round_index} row {row}: {len(members)} members > capacity {cap}")
         if len({member.qubits[0] for member in members}) != len(members):
-            errors.append(f"injection block channel {channel} round {round_index}: duplicate qubit")
+            errors.append(f"injection block channel {channel} round {round_index} row {row}: duplicate qubit")
         if len({member.slot for member in members}) != len(members):
-            errors.append(f"injection block channel {channel} round {round_index}: duplicate slot")
+            errors.append(f"injection block channel {channel} round {round_index} row {row}: duplicate slot")
 
     return errors
 
@@ -277,7 +274,7 @@ def build_layout(program):
     colors = {}
     for net in program.nets:
         colors.setdefault(net.channel, {})[net.qubit] = net.color
-    layer_depths = [max(macro.ref.dims[2] for macro in layer) for layer in layers]
+    layer_depths = [max(macro.ref.dims[2] - 1 for macro in layer) for layer in layers]
     gap_heights = [(channel.tracks + 1) * STRIDE for channel in program.channels]
 
     def bits_at(channel):
@@ -300,42 +297,89 @@ def build_layout(program):
             blocks_by_channel.setdefault(macro.layer, {}).setdefault(macro.round, []).append(index)
 
     injection_z0 = [None] * len(injections)
+    unit_pool = {}
+    if die_dims is not None and program.rows > 1 and factories >= program.rows:
+        per_row, extra = divmod(factories, program.rows)
+        start = 0
+        for row in range(program.rows):
+            size = per_row + (1 if row < extra else 0)
+            unit_pool[row] = list(range(start, start + size))
+            start += size
+    rows_total = program.rows if (die_dims is not None and program.rows > 1) else 1
+    bank_planes = factory.dim_j * STRIDE if factory is not None else 0
+    units_of_row = {row: len(units) for row, units in unit_pool.items()} if unit_pool else ({0: factories} if factory is not None else {})
+    bases, base = [], 0
+    for row in range(rows_total):
+        bases.append(base)
+        base += 3 * STRIDE + units_of_row.get(row, 0) * bank_planes
+    _ROW_BASES[0] = bases
+    unit_strip = {}
+    pools = unit_pool if unit_pool else ({0: list(range(factories))} if factory is not None else {})
+    for row, units in pools.items():
+        for local, unit in enumerate(units):
+            unit_strip[unit] = bases[row] + 3 * STRIDE + local * bank_planes
+    if die_dims is not None:
+        bank_cols = die_dims[0]
+    else:
+        bank_cols = max([*(program.box_widths or [0]), program.num_qubits + 1]
+                        + [col + 1 for layer in program.parking for _, col in layer.values()]
+                        + [macro.offset + 1 for macro in injections])
+    bank_x = bank_cols * STRIDE
     injection_factory = [0] * len(injections)
     last_zz = [0] * factories
     wait_levels = 0
 
     def _place_blocks(channel, z):
         nonlocal wait_levels
-        for round_index in sorted(blocks_by_channel.get(channel, {})):
-            members = blocks_by_channel[channel][round_index]
-            candidate_zz = z + STRIDE
-            if factory is not None:
-                span = factory.interval_k * STRIDE
-                ready = [value + span for value in last_zz]
-                chosen = []
-                shortfall = 0
-                for _ in members:
-                    unit = min(range(factories), key=lambda machine: ready[machine])
-                    shortfall = max(shortfall, ready[unit] - candidate_zz)
-                    ready[unit] += span
-                    chosen.append(unit)
+        rounds = blocks_by_channel.get(channel, {})
+        if not rounds:
+            return z
 
-                if shortfall > 0:
-                    wait = -(-shortfall // STRIDE) * STRIDE
-                    z += wait
-                    wait_levels += wait // STRIDE
-                    candidate_zz = z + STRIDE
+        def _run(items, z_run):
+            nonlocal wait_levels
+            for round_index, members in items:
+                candidate_zz = z_run + STRIDE
+                if factory is not None:
+                    span = factory.interval_k * STRIDE
+                    ready = [value + span for value in last_zz]
+                    chosen = []
+                    shortfall = 0
+                    for member_index in members:
+                        pool = unit_pool.get(injections[member_index].row) if unit_pool else None
+                        candidates = pool if pool else range(factories)
+                        free = [machine for machine in candidates if machine not in chosen] or list(candidates)
+                        unit = min(free, key=lambda machine: ready[machine])
+                        shortfall = max(shortfall, ready[unit] - candidate_zz)
+                        ready[unit] += span
+                        chosen.append(unit)
 
-                counts = {}
-                for member_index, unit in zip(members, chosen):
-                    injection_factory[member_index] = unit
-                    counts[unit] = counts.get(unit, 0) + 1
-                for unit, count in counts.items():
-                    last_zz[unit] = candidate_zz + span * (count - 1)
+                    if shortfall > 0:
+                        wait = -(-shortfall // STRIDE) * STRIDE
+                        z_run += wait
+                        wait_levels += wait // STRIDE
+                        candidate_zz = z_run + STRIDE
 
-            for member_index in members:
-                injection_z0[member_index] = z
-            z += INJECTION_BLOCK_LEVELS * STRIDE
+                    counts = {}
+                    pairing = zip(sorted(members, key=lambda m: injections[m].offset, reverse=True), sorted(chosen))
+                    for member_index, unit in pairing:
+                        injection_factory[member_index] = unit
+                        counts[unit] = counts.get(unit, 0) + 1
+                    for unit, count in counts.items():
+                        last_zz[unit] = candidate_zz + span * (count - 1) if count > 1 else candidate_zz
+
+                for member_index in members:
+                    injection_z0[member_index] = z_run
+                z_run += INJECTION_BLOCK_LEVELS * STRIDE
+            return z_run
+
+        if die_dims is not None and unit_pool:
+            z_end = z
+            for row in sorted({injections[m].row for ms in rounds.values() for m in ms}):
+                items = [(r, [m for m in rounds[r] if injections[m].row == row]) for r in sorted(rounds)]
+                z_end = max(z_end, _run([(r, ms) for r, ms in items if ms], z))
+            z = z_end
+        else:
+            z = _run([(r, rounds[r]) for r in sorted(rounds)], z)
 
         return z
 
@@ -356,9 +400,9 @@ def build_layout(program):
     for layer in range(num_layers):
         out_slots = cols(layer, "out")
         for macro in layers[layer]:
-            _emit_cell_pipes(pipes, macro.ref, z_offsets[layer], macro.offset * STRIDE, macro.row * ROW_PITCH)
+            _emit_cell_pipes(pipes, macro.ref, z_offsets[layer], macro.offset * STRIDE, _row_base(macro.row))
         for macro in layers[layer]:
-            depth = macro.ref.dims[2]
+            depth = macro.ref.dims[2] - 1
             if depth < layer_depths[layer]:
                 for qubit in macro.qubits:
                     row, col = out_slots[qubit]
@@ -391,20 +435,11 @@ def build_layout(program):
                 else:
                     _emit_straight_run(pipes, slot[1] * STRIDE, _wire_y(slot[0]), z_previous, z_bottom, parity)
 
-        for index in in_gap_by_boundary.get(channel, ()):
-            macro = injections[index]
-            jog_z = z_top + (macro.level + 1) * STRIDE
-            injection_z0[index] = jog_z - STRIDE
-            if die_dims is not None:
-                _emit_die_injection(pipes, macro.offset, macro.row, die_dims[0], jog_z - STRIDE, bits.get(macro.qubits[0], 0), slot=macro.slot)
-            else:
-                _emit_injection(pipes, macro.offset, program.magic_column, jog_z - STRIDE, bits.get(macro.qubits[0], 0), slot=macro.slot)
-
         if die_dims is None and program.sides:
             exit_face_cube = (program.box_widths[channel] - 1) * STRIDE
             hop_cube = max(program.box_widths) * STRIDE
             for qubit, (lane_column, slot, plane) in program.sides[channel][0].items():
-                z_port = z_offsets[channel] + layer_depths[channel] - 1 - 2 * slot
+                z_port = z_offsets[channel] + layer_depths[channel] - 2 * slot
                 _emit_side_exit(pipes, exit_face_cube, hop_cube, lane_column * STRIDE, plane * STRIDE, z_port, z_bottom, 0)
             entry_face_cube = (program.box_widths[channel + 1] - 1) * STRIDE
             for qubit, (lane_column, slot, plane) in program.sides[channel + 1][1].items():
@@ -436,10 +471,12 @@ def build_layout(program):
                 parity = program.exit_colors.get(qubit, 0)
             else:
                 parity = colors.get(channel - 1, {}).get(qubit, 0)
-            if die_dims is not None:
-                _emit_die_injection(pipes, macro.offset, macro.row, die_dims[0], injection_z0[index], parity, slot=macro.slot)
-            else:
-                _emit_injection(pipes, macro.offset, program.magic_column, injection_z0[index], parity, slot=macro.slot)
+            _tag_start = len(pipes)
+            unit = injection_factory[index]
+            strip_j = unit_strip.get(unit, _row_base(macro.row) + 3 * STRIDE)
+            _emit_backside(pipes, macro.offset, macro.row, strip_j, bank_x, injection_z0[index], parity)
+            for _pipe in pipes[_tag_start:]:
+                _pipe["inj"] = index
 
     pipes.sort(key=lambda pipe: (pipe["lo"], pipe["hi"], pipe["axis"]))
     bbox = [0, 0, 0]
@@ -460,12 +497,8 @@ def build_layout(program):
             span = factory.interval_k * STRIDE
             for index, macro in enumerate(injections):
                 z_zz = injection_z0[index] + STRIDE
-                if die_dims is not None:
-                    face = die_dims[0] * STRIDE
-                    strip = injection_factory[index] * factory.dim_j * STRIDE
-                else:
-                    face = (program.magic_column + 2 * INJECTION_BANDWIDTH - 1) * STRIDE
-                    strip = injection_factory[index] * factory.dim_j * STRIDE
+                face = bank_x
+                strip = unit_strip.get(injection_factory[index], _row_base(macro.row) + 3 * STRIDE)
                 factory_boxes.append({"lo": [face, strip, z_zz - span], "hi": [face + factory.dim_i * STRIDE, strip + factory.dim_j * STRIDE, z_zz]})
             full = [max(bbox[coordinate], *(box["hi"][coordinate] for box in factory_boxes)) for coordinate in range(3)]
             layout["volume"] = full[0] * full[1] * full[2]
@@ -577,8 +610,11 @@ def write_gltf(layout, path):
         scale = [float(factory_box["hi"][coordinate] - factory_box["lo"][coordinate]) for coordinate in range(3)]
         nodes.append({"mesh": 4, "translation": [float(coordinate) for coordinate in factory_box["lo"]], "scale": scale})
 
+    # root node rotates -90 deg about X so K (time) renders upward (+Y),
+    # matching the lattice-surgery convention; J recedes into the screen.
+    nodes.append({"children": list(range(len(nodes))), "rotation": [-0.7071068, 0.0, 0.0, 0.7071068]})
     root["nodes"] = nodes
-    root["scenes"] = [{"nodes": list(range(len(nodes)))}]
+    root["scenes"] = [{"nodes": [len(nodes) - 1]}]
     root["scene"] = 0
 
     with open(path, "w") as file:

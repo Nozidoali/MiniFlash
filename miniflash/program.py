@@ -107,6 +107,7 @@ class Program:
     #: {qubit: color bit} at the final boundary
     exit_colors: dict = field(default_factory=dict)
 
+
     def to_dict(self):
         """Serialize the Program to a JSON-safe dict (inverse of from_dict)."""
         def ref_dict(macro):
@@ -118,6 +119,7 @@ class Program:
         return {
             "die_dims": list(self.die_dims) if self.die_dims else None,
             "rows": self.rows,
+
             "num_qubits": self.num_qubits,
             "magic_column": self.magic_column,
             "box_widths": list(self.box_widths),
@@ -143,6 +145,7 @@ class Program:
                 return FactorySpec(**ref)
             return tuple(ref)
         return cls(
+
             die_dims=tuple(data["die_dims"]) if data["die_dims"] else None,
             rows=data.get("rows", 0),
             num_qubits=data["num_qubits"],

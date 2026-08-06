@@ -64,6 +64,42 @@ def _expand_gates(circuit: QuantumCircuit) -> QuantumCircuit:
     return expanded
 
 
+def _hoist_t(circuit: QuantumCircuit) -> QuantumCircuit:
+    """Slide each ``t``/``tdg`` to its earliest commuting position on its qubit line.
+
+    Commutes through ``s``/``sdg``/``t``/``tdg`` and the ``cx`` control; crossing
+    ``x`` flips the dagger. ``h``, the ``cx`` target, ``measure`` and ``barrier``
+    block. Earlier T positions merge injections into earlier, fuller channels.
+    """
+    ops = [(inst.operation.name, [circuit.find_bit(q).index for q in inst.qubits], inst) for inst in circuit.data]
+    result = []
+    for name, qubits, inst in ops:
+        if name not in ("t", "tdg"):
+            result.append([name, qubits, inst])
+            continue
+        qubit = qubits[0]
+        dagger = name == "tdg"
+        insert_at = len(result)
+        for position in range(len(result) - 1, -1, -1):
+            other_name, other_qubits, _ = result[position]
+            if qubit not in other_qubits:
+                continue
+            blocks = other_name in ("h", "measure", "barrier") or (other_name == "cx" and other_qubits[1] == qubit)
+            if blocks:
+                break
+            if other_name == "x":
+                dagger = not dagger
+            insert_at = position
+        result.insert(insert_at, ["tdg" if dagger else "t", [qubit], None])
+    rebuilt = QuantumCircuit(circuit.num_qubits, circuit.num_clbits)
+    for name, qubits, inst in result:
+        if inst is not None:
+            rebuilt.append(inst.operation, [rebuilt.qubits[q] for q in qubits], inst.clbits if hasattr(inst, "clbits") else [])
+        else:
+            getattr(rebuilt, name)(qubits[0])
+    return rebuilt
+
+
 def parse(path) -> QuantumCircuit:
     """Load and normalize a circuit to the accepted gate set (``h``/``cx``/``x``/``s``/``sdg``/``t``/``tdg``/``measure``/``barrier``).
 
@@ -71,7 +107,7 @@ def parse(path) -> QuantumCircuit:
     :returns: QuantumCircuit with ``z``/``y``/``cz``/``swap``/``id``/``rz(k*pi/2)`` expanded.
     :raises ValueError: on unsupported gates.
     """
-    circuit = _expand_gates(qasm2.load(str(path)))
+    circuit = _hoist_t(_expand_gates(qasm2.load(str(path))))
     for instruction in circuit.data:
         name = instruction.operation.name
         if name not in ACCEPTED_GATES:

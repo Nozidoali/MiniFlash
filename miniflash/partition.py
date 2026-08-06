@@ -411,6 +411,71 @@ def _rescue_orphans(all_gates, windows):
     windows.sort(key=lambda window: window.gates[0].index)
 
 
+def _split_region_at(region, cut_index):
+    """Cut one region's gate list at a global index into two order-preserving parts."""
+    parts = []
+    for keep_early in (True, False):
+        picked = [(index, gate) for index, gate in zip(region.gate_indices, region.gates) if (index < cut_index) == keep_early]
+        if not picked:
+            return None
+        qubits = sorted({qubit for _, (name, gate_qubits) in picked for qubit in gate_qubits})
+        in_pins = {qubit: f"in_{local}" for local, qubit in enumerate(qubits)}
+        out_pins = {qubit: f"out_{local}" for local, qubit in enumerate(qubits)}
+        parts.append(Region(qubits=qubits, gates=[gate for _, gate in picked], in_pins=in_pins, out_pins=out_pins, first_gate_index=picked[0][0], gate_indices=[index for index, _ in picked]))
+    return parts
+
+
+def _serialize_regions(regions, events):
+    """Split regions until the per-qubit timelines admit a serial order.
+
+    Per-qubit fusion across T cuts can produce region pairs whose gate
+    intervals interleave on different qubits (A before B on one line, B
+    before A on another) — atomic blocks with no valid order. Detect the
+    deadlock the same way schedule_layers consumes timelines and cut the
+    widest-spread front region at its competitor's boundary.
+    """
+    from .schedule import _region_anchors
+
+    for _ in range(4 * (len(regions) + 1)):
+        sequence = {}
+        for order, region in enumerate(regions):
+            for qubit, anchor in _region_anchors(region).items():
+                sequence.setdefault(qubit, []).append((anchor, order, ("region", order)))
+        for order, event in enumerate(events):
+            sequence.setdefault(event.qubit, []).append((event.index, len(regions) + order, ("event", order)))
+        position = {}
+        for qubit in sequence:
+            sequence[qubit].sort(key=lambda item: (item[0], item[1]))
+            position[qubit] = 0
+        pending = {("region", order) for order in range(len(regions))} | {("event", order) for order in range(len(events))}
+
+        def qubits_of(entry):
+            return regions[entry[1]].qubits if entry[0] == "region" else [events[entry[1]].qubit]
+
+        progressed = True
+        while pending and progressed:
+            progressed = False
+            for entry in list(pending):
+                if all(sequence[qubit][position[qubit]][2] == entry for qubit in qubits_of(entry)):
+                    pending.discard(entry)
+                    for qubit in qubits_of(entry):
+                        position[qubit] += 1
+                    progressed = True
+        if not pending:
+            return regions
+
+        fronts = {sequence[qubit][position[qubit]][2] for qubit in sequence if position[qubit] < len(sequence[qubit])}
+        front_regions = [entry[1] for entry in fronts if entry[0] == "region"]
+        target = max(front_regions, key=lambda order: regions[order].gate_indices[-1] - regions[order].gate_indices[0])
+        boundary = min(regions[order].gate_indices[-1] for order in front_regions if order != target) + 1
+        parts = _split_region_at(regions[target], boundary)
+        if parts is None:
+            raise ValueError("partition: cyclic region interleave could not be split")
+        regions[target : target + 1] = parts
+        regions.sort(key=lambda region: region.first_gate_index)
+    raise ValueError("partition: region serialization did not converge")
+
+
 def partition(circuit: QuantumCircuit, max_qubits=4, max_gates=16) -> list:
     """Cut the Clifford part of a circuit into connected windows for cell synthesis.
 
@@ -452,6 +517,7 @@ def partition(circuit: QuantumCircuit, max_qubits=4, max_gates=16) -> list:
         regions.append(Region(qubits=window.qubits, gates=gate_tuples, in_pins=in_pins, out_pins=out_pins, first_gate_index=window.gates[0].index, gate_indices=[gate.index for gate in window.gates]))
 
     events = [InjectionEvent(gate.index, gate.qubits[0], gate.name == "tdg") for gate in gates if gate.name in ("t", "tdg")]
+    regions = _serialize_regions(regions, events)
     return PartitionedCircuit(num_qubits=circuit.num_qubits, gates=gates, regions=regions, events=events)
 
 
