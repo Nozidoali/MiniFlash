@@ -27,7 +27,7 @@ def _region_anchors(region):
     return {qubit: anchors.get(qubit, region.first_gate_index) for qubit in region.qubits}
 
 
-def schedule_layers(partitioned, die_dims=None):
+def schedule_layers(partitioned, die_dims=None, disjoint_columns=False, column_of=None):
     """Assign regions to execution layers and injection events to inter-layer channels.
 
     Processes items in per-qubit timeline order (fused regions may start, in global
@@ -35,6 +35,9 @@ def schedule_layers(partitioned, die_dims=None):
 
     :param partitioned: PartitionedCircuit.
     :param die_dims: (width, rows | None) or None for 1-D.
+    :param disjoint_columns: bool, admit a region to a layer only if its qubit
+        interval does not interleave with regions already in the layer
+        (fixed-column mode: stretched boxes must not overlap).
     :returns: (layers, channels) — layers is list per layer of Region; channels is
         list[int] per event, the layer index before which the injection fires.
     :raises ValueError: if a region cannot fit the die.
@@ -62,7 +65,7 @@ def schedule_layers(partitioned, die_dims=None):
         return all(sequence[qubit][position[qubit]][2] is entry for qubit in qubits)
 
     next_free = {}
-    layers, loads, members = [], [], []
+    layers, loads, members, intervals = [], [], [], []
     channels = {}
     pending = sorted(entries, key=lambda entry: entry[2])
     while pending:
@@ -85,13 +88,21 @@ def schedule_layers(partitioned, die_dims=None):
                 layer += 1
             if layer >= len(layers) and not _admits([], 0, box_width, len(node.qubits), die_dims, num_qubits):
                 raise ValueError(f"schedule_layers: region {node.qubits} does not fit die {die_dims} with {num_qubits} qubits")
+        if disjoint_columns:
+            spans = [column_of[qubit] for qubit in node.qubits] if column_of else node.qubits
+            low, high = min(spans), max(spans)
+            while layer < len(layers) and any(not (high < other_low or other_high < low) for other_low, other_high in intervals[layer]):
+                layer += 1
         while len(layers) <= layer:
             layers.append([])
             loads.append([])
             members.append(0)
+            intervals.append([])
 
         layers[layer].append(node)
         members[layer] += len(node.qubits)
+        if disjoint_columns:
+            intervals[layer].append((low, high))
         for load_index, load in enumerate(loads[layer]):
             if die_dims is not None and load + box_width <= die_dims[0]:
                 loads[layer][load_index] += box_width

@@ -8,7 +8,7 @@ by :func:`miniflash.channel.solve`. A pure function; there is no search.
 """
 import heapq
 
-from .floorplan import Floorplan, SideMove
+from .floorplan import Floorplan, INJECTION_BANDWIDTH, SideMove
 
 
 def _parked_intervals(member_sets, num_qubits):
@@ -269,5 +269,8 @@ def solve_1d(layers, num_qubits, side_ports, with_magic):
 
     base_width = first_lane_column + num_lanes + (1 if any_cycle else 0)
     magic_column = None
+    if with_magic:
+        magic_column = base_width
+        base_width += 2 * INJECTION_BANDWIDTH - 1
 
     return Floorplan(num_qubits=num_qubits, box_widths=box_widths, in_port_columns=in_port_columns, out_port_columns=out_port_columns, lane_columns=lane_columns, moves=moves, gap_levels=gap_levels, side_exits=side_exits, side_entries=side_entries, magic_column=magic_column, placements=box_layouts)

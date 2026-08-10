@@ -27,4 +27,5 @@ below hold the implementations and reference docstrings.
 .. toctree::
    :maxdepth: 1
 
+   lower
    gltf

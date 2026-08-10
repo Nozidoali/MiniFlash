@@ -62,29 +62,30 @@ CLI Reference
    * - flag
      - meaning
    * - ``-o / --out``
-     - output ``.gltf`` path
-   * - ``--cache-dir``
-     - cell cache directory (default ``.miniflash-cache``)
-   * - ``--budget``
-     - per-region SAT seconds before the region is split (default 600)
-   * - ``--max-gates``
-     - floor of the per-region gate cap
+     - write the glTF scene to this path (default: print stats only)
    * - ``--factory``
-     - magic state factory preset (``15-to-1`` | ``t-cultivation``)
-   * - ``--factory-dims I J K``
-     - custom factory footprint / production interval
-   * - ``--die-dims WIDTH ROWS``
-     - die constraint (hard width; ``ROWS 0`` = grow on demand)
+     - magic state factory: ``15-to-1`` | ``t-cultivation`` | ``external``
+       or custom ``IxJxK`` dims (e.g. ``6x2x11``)
+   * - ``--die WIDTH``
+     - die width constraint (rows grow on demand)
    * - ``--factories``
      - number of factory units (die mode)
+   * - ``--sat [SECONDS]``
+     - SAT-solve uncached regions, per-region budget in seconds
+       (default: cached cells + templates only)
    * - ``--side-ports``
-     - swap through cell side faces
+     - swap through cell side faces (1-D only)
+   * - ``--orientation``
+     - lay deep cells down (1-D only)
+   * - ``--cache-dir``
+     - cell cache directory (default ``.miniflash-cache``)
    * - ``--dump-ir``
      - also write the Program IR as ``.program.json``
 
 Partitioning is coarse-first: regions start at whole-circuit
 granularity and split in place whenever a region exhausts its SAT
-budget.
+budget (``--sat`` mode; the default serves cached cells and templates
+everything else).
 
 Using MiniFlash as a Library
 ----------------------------
@@ -103,12 +104,12 @@ renders it:
    floorplan, cells, channels = flash.synthesize(pc)
    program = flash.elaborate(floorplan, cells, events=pc.events, channels=channels)
 
-   layout = flash.build_layout(program)          # check -> lower
-   flash.write_gltf(layout, "layout.gltf")
+   stats = program.stats()                       # check -> measure (no pipes materialized)
+   flash.write_gltf(program, "layout.gltf")
 
    import json
    json.dump(program.stats(), open("stats.json", "w"), indent=2)
 
 ``program.stats()`` carries the volume metrics (``volume``,
-``occupied_volume``, ``cube_envelope``), per-region Pauli frames, and —
+``cube_envelope``), per-region Pauli frames, and —
 for T circuits — injection readout policies and correction tables.

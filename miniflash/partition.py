@@ -374,11 +374,12 @@ def _absorb_adjacent_gates(all_gates, windows, max_gates):
             window = windows[window_index]
             if len(window.gates) >= max_gates:
                 continue
+            separators = separators_by_qubit.get(qubit, ())
             for member_gate in window.gates:
                 if qubit not in member_gate.qubits:
                     continue
                 low, high = min(gate.index, member_gate.index), max(gate.index, member_gate.index)
-                if any(low < separator < high for separator in separators_by_qubit.get(qubit, ())):
+                if bisect.bisect_left(separators, high) > bisect.bisect_right(separators, low):
                     continue
                 distance = high - low
                 if best_distance is None or distance < best_distance:
@@ -452,15 +453,24 @@ def _serialize_regions(regions, events):
         def qubits_of(entry):
             return regions[entry[1]].qubits if entry[0] == "region" else [events[entry[1]].qubit]
 
-        progressed = True
-        while pending and progressed:
-            progressed = False
-            for entry in list(pending):
-                if all(sequence[qubit][position[qubit]][2] == entry for qubit in qubits_of(entry)):
-                    pending.discard(entry)
-                    for qubit in qubits_of(entry):
-                        position[qubit] += 1
-                    progressed = True
+        need = {entry: len(qubits_of(entry)) for entry in pending}
+        at_front = {}
+        for qubit in sequence:
+            entry = sequence[qubit][position[qubit]][2]
+            at_front[entry] = at_front.get(entry, 0) + 1
+        queue = [entry for entry in pending if at_front.get(entry, 0) == need[entry]]
+        while queue:
+            entry = queue.pop()
+            if entry not in pending:
+                continue
+            pending.discard(entry)
+            for qubit in qubits_of(entry):
+                position[qubit] += 1
+                if position[qubit] < len(sequence[qubit]):
+                    successor = sequence[qubit][position[qubit]][2]
+                    at_front[successor] = at_front.get(successor, 0) + 1
+                    if at_front[successor] == need[successor]:
+                        queue.append(successor)
         if not pending:
             return regions
 

@@ -8,7 +8,7 @@ et al., `arXiv:2601.23109 <https://arxiv.org/abs/2601.23109>`_) and
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 14 20 20
+   :widths: 22 16 16 16
 
    * - family
      - circuits
@@ -20,24 +20,24 @@ et al., `arXiv:2601.23109 <https://arxiv.org/abs/2601.23109>`_) and
      - 0.20×
    * - Bernstein–Vazirani
      - 8
-     - 0.51×
-     - 0.19×
+     - 0.46×
+     - 0.17×
    * - Deutsch–Jozsa
      - 8
-     - 1.28×
-     - 0.84×
+     - 1.08×
+     - 0.71×
    * - random Clifford
      - 9
-     - 0.84×
-     - 0.94×
+     - 0.78×
+     - 0.87×
    * - graph states
      - 12
-     - 0.71×
-     - 0.84×
+     - 0.74×
+     - 0.88×
    * - **all**
      - **44**
-     - **0.76×**
-     - **0.52×**
+     - **0.72×**
+     - **0.49×**
 
 Four of the five families favor MiniFlash; the driver on both sides is
 **cell granularity**. Wins come from whole-circuit cells that amortize
@@ -47,20 +47,20 @@ exceeds its budget and the circuit splits into stitched fragments.
 .. note::
 
    Volume = tile bounding box, the same unit in all three tools.
-   Identical QASM inputs; TopoLS under a 180 s wall (misses “—”,
-   bv-100 from its fast profile); random Clifford takes MiniFlash's
-   best configuration per circuit. Measured 2026-08.
+   Identical QASM inputs; TopoLS under a 180 s wall (misses "—",
+   bv-100 from its fast profile). MiniFlash runs use ``--sat`` with a
+   warm cell cache and the default 600 s per-region budget.
+   Measured 2026-08.
 
 GHZ State Preparation
 ---------------------
 
-The advantage widens with size and then stabilizes — 0.44–0.46× vs
-TopoLS and 0.12–0.13× vs DasCot from 10 qubits on: one whole-circuit
+The advantage widens with size and then stabilizes — one whole-circuit
 cell, constant overhead amortized.
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 16 16 16 15 15
+   :widths: 22 16 16 16 16 16
 
    * - circuit
      - MiniFlash
@@ -112,14 +112,11 @@ cell, constant overhead amortized.
      - 0.12×
 
 Bernstein–Vazirani
---------------------
-
-Green at every size (0.33–0.67× / 0.12–0.25×): the chain structure
-compiles into few wide cells and never needs a split.
+------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 16 16 16 15 15
+   :widths: 22 16 16 16 16 16
 
    * - circuit
      - MiniFlash
@@ -134,58 +131,58 @@ compiles into few wide cells and never needs a split.
      - 0.33×
      - 0.12×
    * - ``bv-20``
-     - 621
+     - 552
      - 1,584
      - 3,211
-     - 0.39×
-     - 0.19×
+     - 0.35×
+     - 0.17×
    * - ``bv-30``
-     - 990
+     - 891
      - 2,295
      - 6,525
-     - 0.43×
-     - 0.15×
+     - 0.39×
+     - 0.14×
    * - ``bv-40``
-     - 2,160
+     - 1,890
      - 3,402
      - 11,271
-     - 0.63×
-     - 0.19×
+     - 0.56×
+     - 0.17×
    * - ``bv-50``
-     - 3,420
+     - 3,078
      - 5,103
      - 17,689
-     - 0.67×
-     - 0.19×
+     - 0.60×
+     - 0.17×
    * - ``bv-60``
-     - 4,221
+     - 3,819
      - 7,533
      - 21,299
-     - 0.56×
-     - 0.20×
+     - 0.51×
+     - 0.18×
    * - ``bv-80``
-     - 8,463
+     - 7,644
      - —
      - 34,839
      - —
-     - 0.24×
+     - 0.22×
    * - ``bv-100``
-     - 12,882
+     - 11,526
      - 20,196
      - 52,371
-     - 0.64×
-     - 0.25×
+     - 0.57×
+     - 0.22×
 
 Deutsch–Jozsa
----------------
+-------------
 
-The one family that loses to TopoLS (1.28×): star connectivity
+The one family that loses to TopoLS (1.08×): star connectivity
 fragments into a serial chain of cells and the stitching depth adds up.
-Against DasCot it still wins (0.84×).
+Against DasCot it wins (0.71×).
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 16 16 16 15 15
+   :widths: 22 16 16 16 16 16
 
    * - circuit
      - MiniFlash
@@ -194,64 +191,63 @@ Against DasCot it still wins (0.84×).
      - vs TopoLS
      - vs DasCot
    * - ``dj-16``
-     - 714
+     - 612
      - 486
      - 567
-     - 1.47×
      - 1.26×
+     - 1.08×
    * - ``dj-20``
-     - 1,008
+     - 882
      - 594
      - 1,089
-     - 1.70×
-     - 0.93×
+     - 1.48×
+     - 0.81×
    * - ``dj-30``
-     - 1,488
+     - 1,302
      - 1,071
      - 1,694
-     - 1.39×
-     - 0.88×
+     - 1.22×
+     - 0.77×
    * - ``dj-40``
-     - 2,580
+     - 2,064
      - 1,890
      - 3,211
-     - 1.37×
-     - 0.80×
+     - 1.09×
+     - 0.64×
    * - ``dj-50``
-     - 3,498
+     - 2,862
      - 2,916
      - 4,056
-     - 1.20×
-     - 0.86×
+     - 0.98×
+     - 0.71×
    * - ``dj-60``
-     - 4,158
+     - 3,402
      - 4,464
      - 6,525
-     - 0.93×
-     - 0.64×
+     - 0.76×
+     - 0.52×
    * - ``dj-80``
-     - 8,568
+     - 7,056
      - 8,118
      - 11,271
-     - 1.06×
-     - 0.76×
+     - 0.87×
+     - 0.63×
    * - ``dj-100``
-     - 13,230
+     - 11,340
      - 10,098
      - 17,689
-     - 1.31×
-     - 0.75×
+     - 1.12×
+     - 0.64×
 
-Random Clifford Circuits
-------------------------
+Random Clifford
+---------------
 
-Through 4 qubits every instance collapses into a single depth-3 cell
-(volume 54, up to 0.12×). From ``8q-cx50`` the whole-circuit SAT
-instance exceeds its budget, cells split, and the ratio crosses 1×.
+Best configuration per circuit (``--orientation`` / ``--side-ports``
+sweeps).
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 16 16 16 15 15
+   :widths: 22 16 16 16 16 16
 
    * - circuit
      - MiniFlash
@@ -278,52 +274,48 @@ instance exceeds its budget, cells split, and the ratio crosses 1×.
      - 0.15×
      - 0.12×
    * - ``8q-cx25``
-     - 180
+     - 144
      - 540
      - 243
-     - 0.33×
-     - 0.74×
+     - 0.27×
+     - 0.59×
    * - ``8q-cx50``
-     - 1,188
+     - 855
      - 630
      - 567
-     - 1.89×
-     - 2.10×
+     - 1.36×
+     - 1.51×
    * - ``8q-cx75``
-     - 1,404
+     - 1,380
      - 810
      - 891
-     - 1.73×
-     - 1.58×
+     - 1.70×
+     - 1.55×
    * - ``16q-cx25``
-     - 1,632
+     - 1,344
      - 891
      - 605
-     - 1.83×
-     - 2.70×
+     - 1.51×
+     - 2.22×
    * - ``16q-cx50``
-     - 5,292
+     - 6,105
      - 1,296
      - 968
-     - 4.08×
-     - 5.47×
+     - 4.71×
+     - 6.31×
    * - ``16q-cx75``
-     - 7,104
+     - 6,600
      - 2,025
      - 1,694
-     - 3.51×
-     - 4.19×
+     - 3.26×
+     - 3.90×
 
 Graph States
 ------------
 
-Rings, chains and sparse random graphs win outright (0.19–0.54×);
-small dense graphs and grids lose, with ``gs16-grid`` paying the same
-split tax as ``synthlr-12`` below.
-
 .. list-table::
    :header-rows: 1
-   :widths: 22 16 16 16 15 15
+   :widths: 22 16 16 16 16 16
 
    * - circuit
      - MiniFlash
@@ -344,53 +336,53 @@ split tax as ``synthlr-12`` below.
      - 0.29×
      - 0.28×
    * - ``gs4-dense``
-     - 351
+     - 360
      - 243
      - 196
-     - 1.44×
-     - 1.79×
+     - 1.48×
+     - 1.84×
    * - ``gs4-complete``
-     - 576
+     - 468
      - 297
      - 245
-     - 1.94×
-     - 2.35×
+     - 1.58×
+     - 1.91×
    * - ``gs8-ring``
-     - 120
+     - 429
      - 360
      - 648
-     - 0.33×
-     - 0.19×
+     - 1.19×
+     - 0.66×
    * - ``gs8-linear``
-     - 468
+     - 396
      - 360
      - 567
-     - 1.30×
-     - 0.83×
+     - 1.10×
+     - 0.70×
    * - ``gs8-grid2x4``
-     - 672
+     - 507
      - 405
      - 324
-     - 1.66×
-     - 2.07×
+     - 1.25×
+     - 1.56×
    * - ``gs8-rand50``
-     - 396
+     - 363
      - 1,215
      - 729
-     - 0.33×
-     - 0.54×
+     - 0.30×
+     - 0.50×
    * - ``gs8-rand75``
-     - 1,008
+     - 858
      - 1,935
      - 891
-     - 0.52×
-     - 1.13×
+     - 0.44×
+     - 0.96×
    * - ``gs8-complete``
-     - 702
+     - 594
      - 2,655
      - 1,053
-     - 0.26×
-     - 0.67×
+     - 0.22×
+     - 0.56×
    * - ``gs16-linear``
      - 1,452
      - —
@@ -398,25 +390,18 @@ split tax as ``synthlr-12`` below.
      - —
      - 0.80×
    * - ``gs16-grid``
-     - 4,218
+     - 5,586
      - 1,620
      - 1,452
-     - 2.60×
-     - 2.90×
+     - 3.45×
+     - 3.85×
 
-Worst-Case CNOT Circuits (SynthesizeLR)
----------------------------------------
-
-Worst-case CNOT circuits of Khattar et al. (`arXiv:2510.10967
-<https://arxiv.org/abs/2510.10967>`_); ``manual`` = their hand-optimized
-construction, :math:`3(2n-1)(n-2)`, same unit. The per-instance SAT
-layout overtakes the worst-case template from :math:`n=6` and widens
-with :math:`n` (0.73× → 0.32×), while staying 10–50× under both
-compilers.
+Sparse Long-Range Circuits (SynthLR)
+------------------------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 18 14 14 14 14 13 13
+   :widths: 22 16 16 16 16 16 16
 
    * - circuit
      - MiniFlash
@@ -454,28 +439,26 @@ compilers.
      - 0.32×
      - 0.02×
    * - ``synthlr-12``
-     - 14,148
+     - 168
      - 690
      - —
      - 10,648
-     - 20.50×
-     - 1.33×
-
-``synthlr-12`` hits MiniFlash's SAT capacity wall (the cell splits into
-19 pieces). Not part of the headline geomean.
+     - 0.24×
+     - 0.02×
 
 T-Dense Circuits (Galois-Field Multiplication)
 ----------------------------------------------
 
 Injection-dominated circuits (112–448 T gates): MiniFlash trails
-DasCot, geomean **3.05×** (die mode); TopoLS times out on all of them.
-The residual is a fabric constant — each cell layer plus its channel
-gap costs ~10 time-steps against DasCot's ~1 per routed operation — not
-injection scheduling.
+DasCot, geomean **2.67×** (die mode, ``t-cultivation``,
+gap-riding injections); TopoLS times out on all of them. The residual
+is the per-layer transition toll (channel gap plus injection levels)
+against DasCot's ~1 step per routed operation — see the fixed-column
+work for the path below 1×.
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 14 18 18 15
+   :widths: 22 16 16 16 16
 
    * - circuit
      - T count
@@ -484,27 +467,26 @@ injection scheduling.
      - vs DasCot
    * - ``gf2e4-mult``
      - 112
-     - 28,350
+     - 23,400
      - 12,463
-     - 2.27×
+     - 1.88×
    * - ``gf2e5-mult``
      - 175
-     - 49,104
+     - 43,659
      - 16,456
-     - 2.98×
+     - 2.65×
    * - ``gf2e6-mult``
      - 252
-     - 81,474
+     - 70,971
      - 28,899
-     - 2.82×
+     - 2.46×
    * - ``gf2e7-mult``
      - 343
-     - 117,519
+     - 105,252
      - 34,645
-     - 3.39×
+     - 3.04×
    * - ``gf2e8-mult``
      - 448
-     - 170,226
+     - 153,558
      - 42,081
-     - 4.05×
-
+     - 3.65×

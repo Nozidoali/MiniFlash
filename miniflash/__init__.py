@@ -2,8 +2,8 @@
 
 The pipeline runs to the Program IR (parse -> partition -> schedule ->
 floorplan -> synthesis -> program); the IR is the internal contract to the
-backend half of the package, ``gltf.py``: ``build_layout`` validates and
-lowers a Program to the layout dict, ``write_gltf`` writes the file. The repo-root
+backend half of the package, ``gltf.py``: ``build_layout`` validates a
+Program and measures its volumes, ``write_gltf`` renders it to a file. The repo-root
 ``main.py`` is the driver + CLI, ``scripts/`` holds the optional
 ``download_cache.py`` utility.
 
@@ -15,8 +15,8 @@ The public API mirrors the pipeline stages::
     pc = flash.partition(circuit)   # PartitionedCircuit: .regions / .events / .to_text() / .save_png()
     floorplan, cells, channels = flash.synthesize(pc)
     program = flash.elaborate(floorplan, cells, events=pc.events, channels=channels)
-    layout = flash.build_layout(program)   # check -> lower
-    flash.write_gltf(layout, "layout.gltf")
+    stats = program.stats()                # check -> measure (or flash.build_layout(program))
+    flash.write_gltf(program, "layout.gltf")
 
 Every name below is importable both here and from its home module
 (``flash.parse`` is ``miniflash.parse.parse``); the home modules stay the
@@ -24,7 +24,8 @@ reference for docstrings and internals.
 """
 
 from .factory import FACTORIES, FactorySpec, correction_for, get_factory
-from .gltf import build_layout, write_gltf
+from .gltf import write_gltf
+from .lower import build_layout, check_program
 from .parse import parse
 from .partition import partition, split_region
 from .program import Program, elaborate

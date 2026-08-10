@@ -26,11 +26,11 @@ def _deep_list(value):
 
 @dataclass(frozen=True)
 class MacroInstance:
-    """One placed macro: a synthesized cell, an injection crossbar or a factory."""
+    """One placed macro: a synthesized cell or an injection crossbar."""
 
-    #: "cell" | "injection" | "factory"
+    #: "cell" | "injection"
     kind: str
-    #: geometry payload — Cell for cells, FactorySpec for factories
+    #: geometry payload — Cell for cells, ("gadget", dagger) for injections
     ref: object
     #: layer index for cells, channel index for injections
     layer: int
@@ -106,6 +106,10 @@ class Program:
     sides: list = field(default_factory=list)
     #: {qubit: color bit} at the final boundary
     exit_colors: dict = field(default_factory=dict)
+    #: FactorySpec driving the injections, None without T gates
+    factory: object = None
+    #: factory units available to the machine
+    factories: int = 0
 
 
     def to_dict(self):
@@ -113,12 +117,12 @@ class Program:
         def ref_dict(macro):
             if macro.kind == "cell":
                 return macro.ref.to_dict()
-            if macro.kind == "factory":
-                return {"name": macro.ref.name, "dim_i": macro.ref.dim_i, "dim_j": macro.ref.dim_j, "interval_k": macro.ref.interval_k}
             return list(macro.ref)
         return {
             "die_dims": list(self.die_dims) if self.die_dims else None,
             "rows": self.rows,
+            "factory": {"name": self.factory.name, "dim_i": self.factory.dim_i, "dim_j": self.factory.dim_j, "interval_k": self.factory.interval_k} if self.factory else None,
+            "factories": self.factories,
 
             "num_qubits": self.num_qubits,
             "magic_column": self.magic_column,
@@ -141,13 +145,13 @@ class Program:
         def ref_load(kind, ref):
             if kind == "cell":
                 return Cell.from_dict(ref)
-            if kind == "factory":
-                return FactorySpec(**ref)
             return tuple(ref)
         return cls(
 
             die_dims=tuple(data["die_dims"]) if data["die_dims"] else None,
             rows=data.get("rows", 0),
+            factory=FactorySpec(**data["factory"]) if data.get("factory") else None,
+            factories=data.get("factories", 0),
             num_qubits=data["num_qubits"],
             magic_column=data["magic_column"],
             box_widths=list(data["box_widths"]),
@@ -163,21 +167,22 @@ class Program:
     def stats(self):
         """Compile-quality metrics of this Program: volumes, parity frames, corrections.
 
-        Lowers the IR internally to measure geometry.
+        Lowers the IR internally to measure geometry (extents only — O(1)
+        memory, no pipes materialized).
 
-        :returns: dict — route_stats, volume, occupied_volume, cube_envelope,
-            bbox, pauli_frames; die_dims when die-constrained; factory, t_count,
+        :returns: dict — route_stats, volume, cube_envelope, bbox,
+            pauli_frames; die_dims when die-constrained; factory, t_count,
             wait_levels, compute_volume and per-injection corrections when the
             circuit has T gates.
         """
-        from .gltf import build_layout
+        from .lower import build_layout
 
         layout = build_layout(self)
         cell_macros = [macro for macro in self.macros if macro.kind == "cell"]
         injection_macros = [macro for macro in self.macros if macro.kind == "injection"]
-        factory_spec = next((macro.ref for macro in self.macros if macro.kind == "factory"), None)
+        factory_spec = self.factory
 
-        stats = {"route_stats": layout["route_stats"], "volume": layout["volume"], "occupied_volume": layout["occupied_volume"], "cube_envelope": layout["cube_envelope"], "bbox": list(layout["bbox"]), "pauli_frames": {f"region_{index}": macro.ref.pauli_frame for index, macro in enumerate(cell_macros)}, "factory": None}
+        stats = {"route_stats": layout["route_stats"], "volume": layout["volume"], "cube_envelope": layout["cube_envelope"], "bbox": list(layout["bbox"]), "pauli_frames": {f"region_{index}": macro.ref.pauli_frame for index, macro in enumerate(cell_macros)}, "factory": None}
         if self.die_dims is not None:
             stats["die_dims"] = {"width": self.die_dims[0], "rows_cap": self.die_dims[1], "rows": self.rows}
         if injection_macros:
@@ -213,7 +218,7 @@ def _parity_ledger(floorplan, placements):
     exit_bits = []
     wire_bits = {qubit: 0 for qubit in range(floorplan.num_qubits)}
     for layer in range(num_layers):
-        for cell, (row, offset, box_qubits) in placements[layer]:
+        for cell, (_, offset, box_qubits) in placements[layer]:
             qubits = box_qubits if box_qubits is not None else list(floorplan.out_port_columns[layer])
             wire_bits.update(cell.pin_parities({qubit: floorplan.out_port_columns[layer][qubit] - offset for qubit in qubits if qubit in floorplan.out_port_columns[layer]}, "out"))
         for qubit in side_exits[layer]:
@@ -277,8 +282,6 @@ def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, fact
         for cell, (row, offset, box_qubits) in placements[layer]:
             macros.append(MacroInstance(kind="cell", ref=cell, layer=layer, row=row, offset=offset, qubits=tuple(box_qubits if box_qubits is not None else sorted(floorplan.out_port_columns[layer]))))
     if factory is not None and points:
-        for unit in range(factories):
-            macros.append(MacroInstance(kind="factory", ref=factory, layer=-1, row=unit, offset=0))
         for point in points:
             macros.append(MacroInstance(kind="injection", ref=("gadget", point.dagger), layer=point.channel, row=point.row, offset=point.column, qubits=(point.qubit,), round=point.round, slot=point.slot, level=point.level))
 
@@ -316,4 +319,4 @@ def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, fact
     side_entries = floorplan.side_entries if floorplan.side_entries else [{} for _ in range(num_layers)]
     sides = [[{qubit: (move.lane_column, move.slot, move.plane) for qubit, move in side_exits[layer].items()}, {qubit: (move.lane_column, move.slot, move.plane) for qubit, move in side_entries[layer].items()}] for layer in range(num_layers)]
 
-    return Program(die_dims=floorplan.die_dims, rows=floorplan.rows, macros=macros, nets=nets, channels=channels, num_qubits=floorplan.num_qubits, magic_column=floorplan.magic_column, box_widths=list(floorplan.box_widths), parking=parking, sides=sides, exit_colors=dict(exit_bits[-1]) if exit_bits else {})
+    return Program(die_dims=floorplan.die_dims, rows=floorplan.rows, macros=macros, nets=nets, channels=channels, num_qubits=floorplan.num_qubits, magic_column=floorplan.magic_column, box_widths=list(floorplan.box_widths), parking=parking, sides=sides, exit_colors=dict(exit_bits[-1]) if exit_bits else {}, factory=factory if points else None, factories=factories if factory is not None and points else 0)

@@ -33,7 +33,7 @@ python main.py benchmarks/algorithms/ghz8.qasm -o ghz8.gltf
 
 Partitioning is coarse-first: regions start at whole-circuit granularity
 and split in place whenever a region exhausts its per-region SAT budget
-(`--budget`, default 600 s). Compilation starts cold and warms the cell
+(`--sat`, default budget 600 s; the default mode serves cached cells and templates the rest). Compilation starts cold and warms the cell
 cache as it goes; optionally pre-warm it from the published archive
 (`cache-v1` release, sha256-pinned):
 
@@ -59,8 +59,8 @@ pc = flash.partition(circuit)          # PartitionedCircuit: .regions / .events 
 floorplan, cells, channels = flash.synthesize(pc)
 program = flash.elaborate(floorplan, cells, events=pc.events, channels=channels)
 
-layout = flash.build_layout(program)                # check -> lower
-flash.write_gltf(layout, "layout.gltf")
+stats = program.stats()                             # check -> measure
+flash.write_gltf(program, "layout.gltf")
 
 import json
 json.dump(program.stats(), open("stats.json", "w"), indent=2)   # volumes, pauli frames, T corrections
