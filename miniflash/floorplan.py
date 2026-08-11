@@ -71,6 +71,8 @@ class Floorplan:
     side_entries: list = field(default_factory=list)
     #: leftmost column of the magic-state lane (1-D), None without injections
     magic_column: int = None
+    #: 1 = right-side magic lanes; 2 = margin-column lanes on both sides (fixed columns)
+    magic_sides: int = 1
     #: (width, rows | None) die constraint, None for unconstrained 1-D
     die_dims: tuple = None
     #: number of die rows actually used
@@ -148,13 +150,17 @@ def _in_gap_level(floorplan, boundary, column, slot_count, occupied, slot_levels
     if floorplan.die_dims is not None:
         reach = [floorplan.die_dims[0] - 1] * slot_count
         spacing = 1
+    elif floorplan.magic_sides == 2:
+        reach = [floorplan.magic_column, 0][:slot_count]
+        spacing = 2
     else:
         reach = [floorplan.magic_column + 2 * slot for slot in range(slot_count)]
         spacing = 2
 
+    slot_order = sorted(range(slot_count), key=lambda slot: abs(column - reach[slot]))
     level = qubit_floor
     while True:
-        for slot in range(slot_count):
+        for slot in slot_order:
             plane = 2 if slot == 0 else 0
             low, high = min(column, reach[slot]), max(column, reach[slot])
             if any(abs(level - used) < spacing for used in slot_levels.get((boundary, slot), ())):

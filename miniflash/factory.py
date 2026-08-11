@@ -22,12 +22,15 @@ class FactorySpec:
     dim_j: int
     #: layers of K between two produced magic states
     interval_k: int
+    #: draw production boxes in the layout (False: states appear at the
+    #: lane face with no geometry, e.g. off-chip supply)
+    render: bool = True
 
 
 FACTORIES = {
     "15-to-1": FactorySpec("15-to-1", dim_i=6, dim_j=2, interval_k=11),
     "t-cultivation": FactorySpec("t-cultivation", dim_i=2, dim_j=1, interval_k=2),
-    "external": FactorySpec("external", dim_i=0, dim_j=0, interval_k=0),
+    "external": FactorySpec("external", dim_i=0, dim_j=0, interval_k=0, render=False),
 }
 
 

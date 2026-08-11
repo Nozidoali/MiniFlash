@@ -849,6 +849,8 @@ def _build_spec(num_qubits, stabilizers, depth, in_pin_names, out_pin_names, in_
     if clear_wire_row:
         occupied_columns = set(in_columns) | set(out_columns)
         optional["forbidden_cubes"] = [[column, 1, k] for column in range(box_width) if column not in occupied_columns for k in range(depth)]
+        if os.environ.get("MINIFLASH_BASECLEAR"):
+            optional["forbidden_cubes"] += [[column, row, 0] for column in range(box_width) for row in (0, 2)]
     if optional:
         spec["optional"] = optional
     return spec
@@ -911,14 +913,19 @@ def _solve_region(local_gates, num_qubits, in_pin_names, out_pin_names, min_dept
             print(f"synthesize: stimzx verification unavailable ({type(error).__name__}: {error}) — accepting unverified solution", file=sys.stderr)
             verified = None
         if verified is False:
-            from lassynth.rewrite_passes import color_z as color_z_module
+            from lassynth.rewrite_passes.color_z import SEARCH
 
-            color_z_module.FALLBACK_SEED[0] ^= 1
-            optimized = solution.after_default_optimizations()
-            try:
-                verified = optimized.verify_stabilizers_stimzx(spec)
-            except Exception:
-                verified = None
+            decisions = len(SEARCH["made"])
+            for trial in range(1, (1 << min(decisions, 5)) if decisions else 1):
+                SEARCH["plan"] = tuple((trial >> bit) & 1 for bit in range(decisions))[::-1]
+                optimized = solution.after_default_optimizations()
+                try:
+                    verified = optimized.verify_stabilizers_stimzx(spec)
+                except Exception:
+                    verified = None
+                if verified is not False:
+                    break
+            SEARCH["plan"] = ()
         if verified is False:
             print(f"synthesize: stimzx verification FAILED at depth {depth} — retrying deeper", file=sys.stderr)
             continue
@@ -1020,7 +1027,41 @@ def _template_fallback(region, error, in_columns, out_columns, in_bases, side_en
         raise error
 
 
-def _fixed_permutation(partitioned, seed=0, iterations=6000):
+MERGE_CAP = 8
+
+
+def _merge_interleaved(layer_regions, column_of):
+    from .partition import Region
+
+    boxes = sorted(layer_regions, key=lambda region: min(column_of[qubit] for qubit in region.qubits))
+    groups, group_high = [], None
+    for region in boxes:
+        low = min(column_of[qubit] for qubit in region.qubits)
+        high = max(column_of[qubit] for qubit in region.qubits)
+        if groups and low <= group_high:
+            groups[-1].append(region)
+            group_high = max(group_high, high)
+        else:
+            groups.append([region])
+            group_high = high
+    merged = []
+    for group in groups:
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+        picked = sorted((index, gate) for region in group for index, gate in zip(region.gate_indices, region.gates))
+        qubits = sorted({qubit for region in group for qubit in region.qubits})
+        joint = Region(qubits=qubits, gates=[gate for _, gate in picked],
+                       in_pins={qubit: f"in_{local}" for local, qubit in enumerate(qubits)},
+                       out_pins={qubit: f"out_{local}" for local, qubit in enumerate(qubits)},
+                       first_gate_index=min(region.first_gate_index for region in group),
+                       gate_indices=[index for index, _ in picked])
+        joint.merge_keys = frozenset(region.gate_indices[0] for region in group)
+        merged.append(joint)
+    return merged
+
+
+def _fixed_permutation(partitioned, seed=0, iterations=6000, no_merge=()):
     import random
 
     rng = random.Random(seed)
@@ -1033,7 +1074,7 @@ def _fixed_permutation(partitioned, seed=0, iterations=6000):
                     adjacency[a][b] += 1
 
     def cost(perm):
-        layers, _ = schedule_layers(partitioned, disjoint_columns=True, column_of=perm)
+        layers, _ = schedule_layers(partitioned, disjoint_columns=True, column_of=perm, merge_cap=MERGE_CAP, no_merge=no_merge)
         spans = sum(max(perm[q] for q in region.qubits) - min(perm[q] for q in region.qubits) for layer in layers for region in layer)
         return (len(layers), spans)
 
@@ -1065,14 +1106,11 @@ def _fixed_permutation(partitioned, seed=0, iterations=6000):
 
 
 def _fixed_floorplan(layers, num_qubits, with_magic, column_of):
-    from .floorplan import Floorplan, INJECTION_BANDWIDTH
+    from .floorplan import Floorplan
 
     num_layers = len(layers)
     base_width = num_qubits + 2
-    magic_column = None
-    if with_magic:
-        magic_column = base_width
-        base_width += 2 * INJECTION_BANDWIDTH - 1
+    magic_column = num_qubits + 1 if with_magic else None
     in_port_columns, out_port_columns, lane_columns, placements = [], [], [], []
     for boxes in layers:
         union = {qubit for region in boxes for qubit in region.qubits}
@@ -1081,10 +1119,10 @@ def _fixed_floorplan(layers, num_qubits, with_magic, column_of):
         out_port_columns.append(dict(columns))
         lane_columns.append({qubit: column_of[qubit] + 1 for qubit in range(num_qubits) if qubit not in union})
         placements.append([(0, 0, list(region.qubits)) for region in boxes])
-    return Floorplan(num_qubits=num_qubits, box_widths=[base_width] * num_layers, in_port_columns=in_port_columns, out_port_columns=out_port_columns, lane_columns=lane_columns, moves=[[] for _ in range(max(0, num_layers - 1))], gap_levels=[0] * max(0, num_layers - 1), side_exits=[{} for _ in range(num_layers)], side_entries=[{} for _ in range(num_layers)], magic_column=magic_column, placements=placements)
+    return Floorplan(num_qubits=num_qubits, box_widths=[base_width] * num_layers, in_port_columns=in_port_columns, out_port_columns=out_port_columns, lane_columns=lane_columns, moves=[[] for _ in range(max(0, num_layers - 1))], gap_levels=[0] * max(0, num_layers - 1), side_exits=[{} for _ in range(num_layers)], side_entries=[{} for _ in range(num_layers)], magic_column=magic_column, magic_sides=2, placements=placements)
 
 
-def synthesize(partitioned, cache_dir=".miniflash-cache", side_ports=False, die_dims=None, budget_s=None, orientation=False, use_sat=False, fixed_columns=False):
+def synthesize(partitioned, cache_dir=".miniflash-cache", side_ports=False, die_dims=None, budget_s=None, orientation=False, use_sat=False, fixed_columns=False, no_merge=()):
     """Run the synthesis stage for a whole circuit: schedule, floorplan, then every cell.
 
     Threads the wire parity ledger between cells (a cell's out-pin parities become
@@ -1098,6 +1136,9 @@ def synthesize(partitioned, cache_dir=".miniflash-cache", side_ports=False, die_
     :param budget_s: float | None, SAT budget in seconds per region.
     :param use_sat: bool, solve uncached regions with SAT; False (default)
         serves cache hits and templates everything else.
+    :param no_merge: iterable of frozensets, interleave components (by first
+        gate index) that must not fuse into a joint cell — failed merges the
+        caller is retrying without.
     :param orientation: bool, lay cells down (90-degree I-K rotation plus
         pin elbows) when that shortens the layout — chains of consecutive
         same-column layers fuse into one thin band, singles lie alone when
@@ -1113,10 +1154,11 @@ def synthesize(partitioned, cache_dir=".miniflash-cache", side_ports=False, die_
     :raises SynthTimeout | SynthUnsat: from the failing region, with ``.region`` set.
     """
     regions, events, num_qubits = partitioned.regions, partitioned.events, partitioned.num_qubits
-    column_of = _fixed_permutation(partitioned) if fixed_columns else None
-    layers, channels = schedule_layers(partitioned, die_dims=die_dims, disjoint_columns=fixed_columns, column_of=column_of)
+    column_of = _fixed_permutation(partitioned, no_merge=no_merge) if fixed_columns else None
+    layers, channels = schedule_layers(partitioned, die_dims=die_dims, disjoint_columns=fixed_columns, column_of=column_of, merge_cap=MERGE_CAP if fixed_columns else None, no_merge=no_merge)
 
     if regions and fixed_columns:
+        layers = [_merge_interleaved(layer, column_of) for layer in layers]
         floorplan = _fixed_floorplan(layers, num_qubits, bool(events), column_of)
     elif regions:
         floorplan = solve_floorplan([[region.qubits for region in layer] for layer in layers], num_qubits, side_ports=side_ports, with_magic=bool(events), die_dims=die_dims)
@@ -1158,6 +1200,7 @@ def synthesize(partitioned, cache_dir=".miniflash-cache", side_ports=False, die_
                 if cell is None:
                     if use_sat:
                         error.region = region
+                        error.merge_keys = getattr(region, "merge_keys", None)
                         raise error
                     cell = _template_fallback(region, error, in_columns, out_columns, in_bases, side_entry_slots, side_exit_slots)
 

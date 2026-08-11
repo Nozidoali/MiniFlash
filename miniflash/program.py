@@ -98,6 +98,8 @@ class Program:
     num_qubits: int = 0
     #: leftmost magic-lane column, None without injections
     magic_column: int = None
+    #: 1 = right-side magic lanes; 2 = margin-column lanes on both sides
+    magic_sides: int = 1
     #: per layer, cell-band width in columns
     box_widths: list = field(default_factory=list)
     #: per layer, {qubit: (row, column)} parked slots
@@ -121,11 +123,12 @@ class Program:
         return {
             "die_dims": list(self.die_dims) if self.die_dims else None,
             "rows": self.rows,
-            "factory": {"name": self.factory.name, "dim_i": self.factory.dim_i, "dim_j": self.factory.dim_j, "interval_k": self.factory.interval_k} if self.factory else None,
+            "factory": {"name": self.factory.name, "dim_i": self.factory.dim_i, "dim_j": self.factory.dim_j, "interval_k": self.factory.interval_k, "render": self.factory.render} if self.factory else None,
             "factories": self.factories,
 
             "num_qubits": self.num_qubits,
             "magic_column": self.magic_column,
+            "magic_sides": self.magic_sides,
             "box_widths": list(self.box_widths),
             "parking": [[[qubit, list(slot)] for qubit, slot in layer.items()] for layer in self.parking],
             "sides": [[[[qubit, list(entry)] for qubit, entry in group.items()] for group in layer] for layer in self.sides],
@@ -154,6 +157,7 @@ class Program:
             factories=data.get("factories", 0),
             num_qubits=data["num_qubits"],
             magic_column=data["magic_column"],
+            magic_sides=data.get("magic_sides", 1),
             box_widths=list(data["box_widths"]),
             parking=[{qubit: tuple(slot) for qubit, slot in layer} for layer in data["parking"]],
             sides=[[{qubit: tuple(entry) for qubit, entry in group} for group in layer] for layer in data["sides"]],
@@ -319,4 +323,4 @@ def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, fact
     side_entries = floorplan.side_entries if floorplan.side_entries else [{} for _ in range(num_layers)]
     sides = [[{qubit: (move.lane_column, move.slot, move.plane) for qubit, move in side_exits[layer].items()}, {qubit: (move.lane_column, move.slot, move.plane) for qubit, move in side_entries[layer].items()}] for layer in range(num_layers)]
 
-    return Program(die_dims=floorplan.die_dims, rows=floorplan.rows, macros=macros, nets=nets, channels=channels, num_qubits=floorplan.num_qubits, magic_column=floorplan.magic_column, box_widths=list(floorplan.box_widths), parking=parking, sides=sides, exit_colors=dict(exit_bits[-1]) if exit_bits else {}, factory=factory if points else None, factories=factories if factory is not None and points else 0)
+    return Program(die_dims=floorplan.die_dims, rows=floorplan.rows, macros=macros, nets=nets, channels=channels, num_qubits=floorplan.num_qubits, magic_column=floorplan.magic_column, magic_sides=floorplan.magic_sides, box_widths=list(floorplan.box_widths), parking=parking, sides=sides, exit_colors=dict(exit_bits[-1]) if exit_bits else {}, factory=factory if points else None, factories=factories if factory is not None and points else 0)

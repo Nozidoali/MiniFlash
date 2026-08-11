@@ -44,11 +44,16 @@ def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=Fa
 
     factory_spec = (factory if isinstance(factory, flash.FactorySpec) else flash.get_factory(factory)) if events else None
     rung_of = {id(region): 0 for region in regions}
+    no_merge = set()
     while True:
         try:
-            floorplan, cells, channels = flash.synthesize(partitioned, cache_dir=cache_dir, side_ports=side_ports, die_dims=die_dims, budget_s=budget_s, orientation=orientation, use_sat=use_sat, fixed_columns=fixed_columns)
+            floorplan, cells, channels = flash.synthesize(partitioned, cache_dir=cache_dir, side_ports=side_ports, die_dims=die_dims, budget_s=budget_s, orientation=orientation, use_sat=use_sat, fixed_columns=fixed_columns, no_merge=frozenset(no_merge))
             break
         except RuntimeError as error:
+            merge_keys = getattr(error, "merge_keys", None)
+            if merge_keys is not None:
+                no_merge.add(merge_keys)
+                continue
             failed = getattr(error, "region", None)
             if failed is None:
                 raise

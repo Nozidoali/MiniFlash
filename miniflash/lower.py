@@ -634,14 +634,18 @@ class _LaneEmitter(_Emitter):
 
     def crossbar(self, macro, z0, parity_bit):
         data_cube = macro.offset * STRIDE
-        magic_cube = (self.program.magic_column + 2 * macro.slot) * STRIDE
+        if self.program.magic_sides == 2:
+            magic_cube = self.program.magic_column * STRIDE if macro.slot == 0 else 0
+        else:
+            magic_cube = (self.program.magic_column + 2 * macro.slot) * STRIDE
         z_zz = z0 + STRIDE
         plane_j = 2 * STRIDE if macro.slot == 0 else 0
         hop_bit = 1 - parity_bit
-        yield _make_pipe([magic_cube, WIRE_J, z0], [magic_cube + STRIDE, WIRE_J, z0], "I", 0, t_volume=True)
+        if self.program.magic_sides != 2:
+            yield _make_pipe([magic_cube, WIRE_J, z0], [magic_cube + STRIDE, WIRE_J, z0], "I", 0, t_volume=True)
         yield _make_pipe([magic_cube, WIRE_J, z0], [magic_cube, WIRE_J, z_zz], "K", 0, t_volume=True)
         yield _make_pipe([data_cube, min(WIRE_J, plane_j), z_zz], [data_cube, max(WIRE_J, plane_j), z_zz], "J", hop_bit, t_volume=True)
-        for i in range(data_cube, magic_cube, STRIDE):
+        for i in range(min(data_cube, magic_cube), max(data_cube, magic_cube), STRIDE):
             yield _make_pipe([i, plane_j, z_zz], [i + STRIDE, plane_j, z_zz], "I", parity_bit, t_volume=True)
         yield _make_pipe([magic_cube, min(WIRE_J, plane_j), z_zz], [magic_cube, max(WIRE_J, plane_j), z_zz], "J", hop_bit, t_volume=True)
 
@@ -650,15 +654,24 @@ def _pipes_of(program, plan):
     yield from emitter.pipes()
 
 def _factory_boxes(plan):
-    if plan.factory is None:
+    if plan.factory is None or not plan.factory.render:
         return []
     span = plan.factory.interval_k * STRIDE
+    width = plan.factory.dim_i * STRIDE
     boxes = []
     for index, macro in enumerate(plan.injections):
         z_zz = plan.injection_z0[index] + STRIDE
+        if macro.level >= 0 and plan.die_dims is None:
+            wire = _row_base(plan.bases, macro.row) + WIRE_J
+            if plan.program.magic_sides == 2:
+                face = -width if macro.slot == 1 else (plan.program.magic_column + 1) * STRIDE
+            else:
+                face = (plan.program.magic_column + 2 * macro.slot + 1) * STRIDE
+            boxes.append({"lo": [face, wire, z_zz - span], "hi": [face + width, wire + plan.factory.dim_j * STRIDE, z_zz]})
+            continue
         face = plan.bank_x
         strip = plan.unit_strip.get(plan.injection_factory[index], _row_base(plan.bases, macro.row) + 3 * STRIDE)
-        boxes.append({"lo": [face, strip, z_zz - span], "hi": [face + plan.factory.dim_i * STRIDE, strip + plan.factory.dim_j * STRIDE, z_zz]})
+        boxes.append({"lo": [face, strip, z_zz - span], "hi": [face + width, strip + plan.factory.dim_j * STRIDE, z_zz]})
     return boxes
 
 def _layout(program, plan, extent):
@@ -673,7 +686,8 @@ def _layout(program, plan, extent):
         factory_boxes = _factory_boxes(plan)
         if factory_boxes:
             full = [max(bbox[coordinate], *(box["hi"][coordinate] for box in factory_boxes)) for coordinate in range(3)]
-            layout["volume"] = full[0] * full[1] * full[2]
+            low = [min(0, *(box["lo"][coordinate] for box in factory_boxes)) for coordinate in range(3)]
+            layout["volume"] = (full[0] - low[0]) * (full[1] - low[1]) * (full[2] - low[2])
         layout["factory_boxes"] = factory_boxes
         layout["t_count"] = len(plan.injections)
         layout["wait_levels"] = plan.wait_levels

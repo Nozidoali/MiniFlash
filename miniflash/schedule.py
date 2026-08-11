@@ -17,6 +17,20 @@ def _admits(loads, members, box_width, box_qubits, die_dims, num_qubits):
     return len(loads) < rows
 
 
+def _component(boxes, low, high, size, key):
+    lo, hi, total, keys = low, high, size, {key}
+    changed = True
+    while changed:
+        changed = False
+        for box_low, box_high, box_size, box_key in boxes:
+            if box_key not in keys and not (hi < box_low or box_high < lo):
+                keys.add(box_key)
+                total += box_size
+                lo, hi = min(lo, box_low), max(hi, box_high)
+                changed = True
+    return total, keys
+
+
 def _region_anchors(region):
     anchors = {}
     if region.gate_indices:
@@ -27,7 +41,7 @@ def _region_anchors(region):
     return {qubit: anchors.get(qubit, region.first_gate_index) for qubit in region.qubits}
 
 
-def schedule_layers(partitioned, die_dims=None, disjoint_columns=False, column_of=None):
+def schedule_layers(partitioned, die_dims=None, disjoint_columns=False, column_of=None, merge_cap=None, no_merge=()):
     """Assign regions to execution layers and injection events to inter-layer channels.
 
     Processes items in per-qubit timeline order (fused regions may start, in global
@@ -38,6 +52,11 @@ def schedule_layers(partitioned, die_dims=None, disjoint_columns=False, column_o
     :param disjoint_columns: bool, admit a region to a layer only if its qubit
         interval does not interleave with regions already in the layer
         (fixed-column mode: stretched boxes must not overlap).
+    :param merge_cap: int | None, in disjoint-column mode also admit an
+        interleaving region when the resulting overlap component stays within
+        this many qubits (the component is later synthesized as one joint cell).
+    :param no_merge: iterable of frozensets, overlap components (keyed by each
+        member's first gate index) that must not form — failed joint cells.
     :returns: (layers, channels) — layers is list per layer of Region; channels is
         list[int] per event, the layer index before which the injection fires.
     :raises ValueError: if a region cannot fit the die.
@@ -67,6 +86,7 @@ def schedule_layers(partitioned, die_dims=None, disjoint_columns=False, column_o
     next_free = {}
     layers, loads, members, intervals = [], [], [], []
     channels = {}
+    region_layer = {}
     pending = sorted(entries, key=lambda entry: entry[2])
     while pending:
         entry = next((candidate for candidate in pending if at_front(candidate)), None)
@@ -91,7 +111,13 @@ def schedule_layers(partitioned, die_dims=None, disjoint_columns=False, column_o
         if disjoint_columns:
             spans = [column_of[qubit] for qubit in node.qubits] if column_of else node.qubits
             low, high = min(spans), max(spans)
-            while layer < len(layers) and any(not (high < other_low or other_high < low) for other_low, other_high in intervals[layer]):
+            key = node.gate_indices[0] if node.gate_indices else node.first_gate_index
+            while layer < len(layers):
+                total, keys = _component(intervals[layer], low, high, len(node.qubits), key)
+                if total == len(node.qubits):
+                    break
+                if merge_cap and total <= merge_cap and not any(banned <= keys for banned in no_merge):
+                    break
                 layer += 1
         while len(layers) <= layer:
             layers.append([])
@@ -100,9 +126,10 @@ def schedule_layers(partitioned, die_dims=None, disjoint_columns=False, column_o
             intervals.append([])
 
         layers[layer].append(node)
+        region_layer[id(node)] = layer
         members[layer] += len(node.qubits)
         if disjoint_columns:
-            intervals[layer].append((low, high))
+            intervals[layer].append((low, high, len(node.qubits), key))
         for load_index, load in enumerate(loads[layer]):
             if die_dims is not None and load + box_width <= die_dims[0]:
                 loads[layer][load_index] += box_width
@@ -113,4 +140,45 @@ def schedule_layers(partitioned, die_dims=None, disjoint_columns=False, column_o
             next_free[qubit] = layer + 1
             position[qubit] += 1
 
+    if disjoint_columns and events:
+        _pack_events(sequence, channels, region_layer, len(layers))
     return layers, [channels[event] for event in events]
+
+
+def _pack_events(sequence, channels, region_layer, num_layers):
+    windows = []
+    for items in sequence.values():
+        next_layer = num_layers
+        for _, _, (kind, node, _) in reversed(items):
+            if kind == "region":
+                next_layer = region_layer[id(node)]
+            else:
+                windows.append((node.index, node, next_layer))
+
+    counts, stacks, floors = {}, {}, {}
+
+    def bands(channel):
+        stack = stacks.get(channel, {})
+        return max((counts.get(channel, 0) + 1) // 2, max(stack.values(), default=0))
+
+    def occupy(channel, qubit):
+        counts[channel] = counts.get(channel, 0) + 1
+        stack = stacks.setdefault(channel, {})
+        stack[qubit] = stack.get(qubit, 0) + 1
+
+    for _, event, high in sorted(windows):
+        low = max(channels[event], floors.get(event.qubit, 0))
+        best, best_cost = channels[event], None
+        for channel in range(max(low, 1), min(high, num_layers - 1) + 1):
+            before = bands(channel)
+            occupy(channel, event.qubit)
+            cost = bands(channel) - before
+            counts[channel] -= 1
+            stacks[channel][event.qubit] -= 1
+            if best_cost is None or cost < best_cost:
+                best, best_cost = channel, cost
+                if cost == 0:
+                    break
+        occupy(best, event.qubit)
+        channels[event] = best
+        floors[event.qubit] = best
