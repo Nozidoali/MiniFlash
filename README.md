@@ -1,8 +1,10 @@
 <p align="center">
-  <img src="docs/logo.svg" width="120" alt="miniflash logo">
+  <img src="docs/logo.svg" width="128" height="128" alt="MiniFlash logo">
 </p>
 
 <h1 align="center">MiniFlash</h1>
+
+Part of the [High-Level Quantum Circuit Synthesis Toolkit](https://github.com/Nozidoali/q-hls).
 
 <p align="center"><b>A <i>mini</i> and <i>fast</i> Clifford+T &rarr; lattice-surgery compiler.</b></p>
 
