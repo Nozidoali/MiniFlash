@@ -24,10 +24,8 @@ unlimited. The router counts routed steps only, so walk steps inserted later onl
 widen the gap. When every ready pair is a T that waits for a tile or a state, the
 router emits an idle step.
 
-spacing.stage compacts the resulting windows and inserts walks. See
-``docs/05-budget.md`` for the objectives and ``docs/09-exact-routing.md`` for the
-scope of exactness. Candidates include straight, L, and limited three-segment
-paths from the shared search; this solver does not use a BFS fallback.
+spacing.stage compacts the resulting windows and inserts walks. Candidates are the
+straight, L, and limited three-segment paths from the shared search.
 """
 from __future__ import annotations
 

@@ -2,9 +2,5 @@ __pycache__/
 *.egg-info/
 build/
 .venv/
-.miniflash-cache/
-/lassynth/
 *.gltf
 out/
-docs/_build/
-.bench-stage/

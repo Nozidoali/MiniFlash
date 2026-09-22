@@ -1,67 +1,58 @@
-<p align="center">
-  <img src="docs/logo.svg" width="120" alt="miniflash logo">
-</p>
+# MiniFlash
 
-<h1 align="center">MiniFlash</h1>
-
-<p align="center"><b>A <i>mini</i> and <i>fast</i> Clifford+T &rarr; lattice-surgery compiler.</b></p>
-
-<p align="center">
-  <a href="https://miniflash.readthedocs.io"><img src="https://readthedocs.org/projects/miniflash/badge/?version=latest" alt="documentation"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2626d9.svg" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/python-3.9%2B-d92626.svg" alt="python 3.9+">
-  <img src="https://img.shields.io/badge/pure-Python-26bf40.svg" alt="pure python">
-</p>
-
-MiniFlash turns a Clifford+T circuit (OpenQASM 2.0) into a
-fault-tolerant **lattice-surgery layout**: the explicit 3-D spacetime
-volume that a surface-code quantum computer would execute, with logical
-qubits traced as pipes and every surgery, Hadamard and magic-state
-injection placed. The result is a self-contained glTF scene — open it
-in any 3-D viewer. Cell synthesis is
-[LaSsynth](https://arxiv.org/abs/2404.18369) (Tan, Niu, Gidney — ISCA
-2024). Read the [full documentation](https://miniflash.readthedocs.io).
+A small Clifford+T → lattice-surgery compiler. MiniFlash turns an OpenQASM 2.0
+circuit into a **tile program**: which tiles hold qubits, magic states and routes,
+and which tiles merge at each step. It minimizes spacetime volume (height × width
+× steps, walks included), checks every program with an independent verifier, and
+renders it as a glTF scene.
 
 ## Quickstart
 
 ```bash
-pip install -e .
-python scripts/download_lassynth.py     # fetch LaSsynth from its Zenodo artifact (sha256-pinned)
+pip install -e '.[test]'
+python -m pytest -q tests
 python main.py benchmarks/algorithms/ghz8.qasm -o ghz8.gltf
-# open in any glTF viewer, e.g. https://gltf-viewer.donmccurdy.com/
 ```
 
-Partitioning is coarse-first: regions start at whole-circuit granularity
-and split in place whenever a region exhausts its per-region SAT budget
-(`--sat`, default budget 600 s; the default mode serves cached cells and templates the rest). Compilation starts cold and warms the cell
-cache as it goes; optionally pre-warm it from the published archive
-(`cache-v1` release, sha256-pinned):
+Open the `.gltf` in any viewer, e.g. <https://gltf-viewer.donmccurdy.com/>. Time
+runs upward, two layers per step. Qubits are red pillars. A CNOT splits at its
+first turn, where an ancilla climbs: the half from the control's Z side sits on the
+lower layer (blue), the half into the target's X side on the upper layer (red).
+T merges end at green magic states; walks between partitions are orange.
+
+Several circuits print a CSV, one verified row each:
 
 ```bash
-python scripts/download_cache.py
+python main.py benchmarks/toffoli/*.qasm --solver placement > toffoli.csv
 ```
 
-SAT solving uses
-[kissat](https://github.com/arminbiere/kissat) when available — build it
-and point `MINIFLASH_KISSAT_DIR` at the directory holding the `kissat`
-binary — and falls back to z3 otherwise. `benchmarks/` ships 175
-circuits to try (ghz/bv/dj, random Clifford, graph states, gf-mult,
-Toffoli, ...).
-
-As a library — the pipeline runs to the **Program IR**, and the
-package's own backend renders it:
+As a library:
 
 ```python
 import miniflash as flash
 
-circuit = flash.parse("circuit.qasm")
-pc = flash.partition(circuit)          # PartitionedCircuit: .regions / .events / .to_text() / .save_png()
-floorplan, cells, channels = flash.synthesize(pc)
-program = flash.elaborate(floorplan, cells, events=pc.events, channels=channels)
-
-stats = program.stats()                             # check -> measure
-flash.write_gltf(program, "layout.gltf")
-
-import json
-json.dump(program.stats(), open("stats.json", "w"), indent=2)   # volumes, pauli frames, T corrections
+problem = flash.read_qasm("benchmarks/toffoli/tof-3.qasm")
+program = flash.make("layout").solve(problem)
+report = flash.verify(problem, program)
+flash.write_gltf(program, "tof3.gltf")
 ```
+
+## Options
+
+- `--solver`: a step of the compiler's ladder, `vanilla`, `dependency`, `routing`,
+  `spacing`, `placement`, `layout` (default), or a development control (`compact`,
+  `staged`, `placed`). `--shapes N` compares the N smallest site shapes.
+- `--factory HxWxT`: magic-state factory, H tiles deep, W wide, one state every T
+  steps. Alone, one factory sits behind every magic tile.
+- `--factories F`: F shared factories feed the whole chip through delivery rings
+  around it; `-o` draws them.
+- `--json FILE`: save the tile program.
+
+Without `--factory`, magic supply is unlimited. Single-qubit Cliffords are free.
+
+`benchmarks/` holds 183 circuits (GHZ, BV, DJ, QFT, random Clifford, graph states,
+Galois-field multipliers, Toffoli, ...).
+
+## License
+
+MIT
