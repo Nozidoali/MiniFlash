@@ -16,7 +16,7 @@ extensions = [
 ]
 
 # Heavy runtime deps are mocked so the docs build needs no qiskit/stim wheel.
-autodoc_mock_imports = ["qiskit", "stim", "z3", "matplotlib", "lassynth", "stimzx", "networkx"]
+autodoc_mock_imports = ["qiskit", "numpy"]
 autodoc_member_order = "bysource"
 autodoc_class_signature = "separated"
 autodoc_default_options = {"members": True}

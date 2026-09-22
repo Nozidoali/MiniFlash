@@ -1,31 +1,46 @@
 API Reference
 =============
 
-``import miniflash as flash`` exposes every public name at the package
-top level (``flash.parse``, ``flash.partition``, ...); the home modules
-below hold the implementations and reference docstrings.
+The data flows through five objects, each in its own module::
 
-**Frontend** — circuit to Program IR:
+   read_qasm / Problem.builder
+             │
+          Problem                 ordered pairs + dependency DAG
+             │ map
+          Mapping ← Layout        physical tiles ← virtual site order
+             │ route
+          list[list[Route]]       one list of disjoint routes per step
+             │ compact / stage    shrink coordinates; insert walks
+          Program                 sparse tile graph at every step
+             │ verify / write_gltf
+          Report, .gltf           checked volume; 3-D scene
 
-.. toctree::
-   :maxdepth: 1
+Input
+-----
 
-   parse
-   partition
-   schedule
-   floorplan
-   placement1d
-   placement2d
-   channel
-   synthesis
-   orientation
-   program
-   factory
+.. automodule:: miniflash.parse
+.. automodule:: miniflash.circuit
 
-**Backend** — Program IR to geometry and glTF:
+Geometry
+--------
 
-.. toctree::
-   :maxdepth: 1
+.. automodule:: miniflash.mapping
+.. automodule:: miniflash.route
 
-   lower
-   gltf
+The Compiler
+------------
+
+.. automodule:: miniflash.compiler
+.. automodule:: miniflash.solver.placement
+.. automodule:: miniflash.solver.schedule
+.. automodule:: miniflash.solver.routing
+.. automodule:: miniflash.solver.spacing
+.. automodule:: miniflash.solver.layout
+
+Output
+------
+
+.. automodule:: miniflash.program
+.. automodule:: miniflash.verify
+.. automodule:: miniflash.factory
+.. automodule:: miniflash.gltf

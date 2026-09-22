@@ -4,13 +4,11 @@ MiniFlash
 **A mini and fast Clifford+T → lattice-surgery compiler.**
 
 MiniFlash turns a Clifford+T circuit (OpenQASM 2.0) into a
-fault-tolerant lattice-surgery layout — the explicit 3-D spacetime
-volume that a surface-code quantum computer would execute, with logical
-qubits traced as pipes and every surgery, Hadamard and magic-state
-injection placed. The result is a self-contained glTF scene you can
-open in any 3-D viewer. Cell synthesis is
-`LaSsynth <https://arxiv.org/abs/2404.18369>`_ (Tan, Niu, Gidney —
-ISCA 2024).
+lattice-surgery **tile program**: which tiles hold qubits, magic states and
+routes, and which tiles merge at each step. It minimizes spacetime volume —
+chip height × width × steps, including the steps spent moving qubits — and an
+independent verifier checks every program before its volume is reported. The
+result renders to a self-contained glTF scene you can open in any 3-D viewer.
 
 .. grid:: 1 1 3 3
    :gutter: 3
@@ -19,22 +17,22 @@ ISCA 2024).
       :link: quickstart
       :link-type: doc
 
-      Install, fetch LaSsynth, and compile your first circuit into a
-      glTF scene in three commands.
+      Install and compile your first circuit into a verified tile
+      program and a glTF scene.
 
    .. grid-item-card:: Benchmarks
       :link: benchmarks
       :link-type: doc
 
-      Compiled volume against TopoLS and DasCot across 44 Clifford and
-      graph-state circuits.
+      Verified volume of the default solver on every shipped
+      benchmark circuit.
 
    .. grid-item-card:: API reference
       :link: api/index
       :link-type: doc
 
-      The pipeline stages — parse to Program IR to glTF — as a small
-      public API.
+      The pipeline objects — Problem, Mapping, Route, Program — and
+      the solvers that connect them.
 
 .. toctree::
    :hidden:

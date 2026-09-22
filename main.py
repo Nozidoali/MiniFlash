@@ -1,127 +1,95 @@
-"""The miniflash driver + CLI: ``python main.py circuit.qasm [-o out.gltf]``.
+"""The miniflash driver + CLI.
 
-``compile()`` runs the package pipeline to the Program IR and is the
-library entry point (``from main import compile``); ``main()`` prints the
-volume stats, and renders the glTF scene (``write_gltf``) only when
-``-o`` is given.
+    python main.py benchmarks/algorithms/ghz8.qasm -o ghz8.gltf
+    python main.py benchmarks/toffoli/*.qasm --solver placement > toffoli.csv
+    python main.py --list benchmarks.txt --shapes 3
+
+--solver names a step of the compiler's ladder (vanilla, dependency, routing,
+spacing, placement, layout) or a development control (compact, staged, placed);
+the other options adjust that configuration. Each circuit is parsed, compiled,
+and verified before its CSV row is printed to stdout; a verification failure
+aborts the run. compile_s covers parsing and solving, verify_s the independent
+checker. With one circuit, ``-o`` renders the glTF scene and ``--json`` saves the
+tile program. Progress goes to stderr.
 """
-
 import argparse
-import json
+import csv
+import sys
+import time
 from pathlib import Path
 
 import miniflash as flash
 
+FIELDS = ["circuit", "qubits", "pairs", "depth", "grid", "steps", "walk_steps", "volume", "compile_s", "verify_s"]
 
-def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=False, factory="15-to-1", die_dims=None, factories=1, budget_s=600, orientation=False, use_sat=False, fixed_columns=False):
-    """Compile a circuit to the Program IR: parse -> partition -> synthesize -> elaborate.
 
-    Partitioning is coarse-first: regions start at whole-circuit granularity
-    (capped at 16 qubits) and split in place when a region exhausts its processing
-    budget (16 -> 12 -> 8 -> 6 -> 4 -> 2).
+def shapes_option(text):
+    return text if text in ("stats", "default") else int(text)
+
+
+def compile(qasm_path, solver="layout", **options):
+    """Parse, solve and verify one circuit.
 
     :param qasm_path: str | Path to a .qasm file.
-    :param cache_dir: str, LaSsynth disk cache directory.
-    :param max_gates: int, floor of the per-region gate cap.
-    :param side_ports: bool, swap through cell side faces.
-    :param factory: str preset name or FactorySpec.
-    :param die_dims: (width, rows | None) or None for 1-D.
-    :param factories: int, magic state factory units.
-    :param budget_s: int, processing budget in seconds per region.
-    :param use_sat: bool, SAT-solve uncached regions; False (default) serves
-        cache hits and templates everything else.
-    :param orientation: bool, lay deep cells down when that shortens their layer (1-D only).
-    :returns: Program.
+    :param solver: str, a key of ``miniflash.PRESETS``.
+    :param options: Compiler options (shapes, extra, share, seed, factory, factories).
+    :returns: (Problem, Program, Report).
     """
-    circuit = flash.parse(qasm_path)
-    top = min(circuit.num_qubits, 16)
-    caps = [top] + [cap for cap in (12, 8, 6, 4, 2) if cap < top]
-    gates_cap = lambda cap: max(max_gates, cap * cap)
-    partitioned = flash.partition(circuit, max_qubits=caps[0], max_gates=gates_cap(caps[0]))
-    regions, events = partitioned.regions, partitioned.events
-    if not regions and not events:
-        raise RuntimeError("compile: circuit has no synthesizable regions")
-
-    factory_spec = (factory if isinstance(factory, flash.FactorySpec) else flash.get_factory(factory)) if events else None
-    rung_of = {id(region): 0 for region in regions}
-    no_merge = set()
-    while True:
-        try:
-            floorplan, cells, channels = flash.synthesize(partitioned, cache_dir=cache_dir, side_ports=side_ports, die_dims=die_dims, budget_s=budget_s, orientation=orientation, use_sat=use_sat, fixed_columns=fixed_columns, no_merge=frozenset(no_merge))
-            break
-        except RuntimeError as error:
-            merge_keys = getattr(error, "merge_keys", None)
-            if merge_keys is not None:
-                no_merge.add(merge_keys)
-                continue
-            failed = getattr(error, "region", None)
-            if failed is None:
-                raise
-            rung = rung_of[id(failed)] + 1
-            if rung >= len(caps):
-                raise
-            index = next(position for position, region in enumerate(regions) if region is failed)
-            subs = flash.split_region(failed, caps[rung], gates_cap(caps[rung]))
-            regions[index : index + 1] = subs
-            for sub in subs:
-                rung_of[id(sub)] = rung
-
-    return flash.elaborate(floorplan, cells, events=events, channels=channels, factory=factory_spec, factories=factories)
+    problem = flash.read_qasm(qasm_path)
+    program = flash.make(solver, **options).solve(problem)
+    report = flash.verify(problem, program, options.get("factory"), options.get("factories", 0))
+    return problem, program, report
 
 
 def main():
-    """CLI entry point: compile to the Program IR, then write the glTF scene.
-
-    :returns: None; prints the glTF path.
-    """
-    parser = argparse.ArgumentParser(description="Compile a Clifford+T OpenQASM 2.0 circuit into a lattice-surgery layout (glTF 2.0)")
-    parser.add_argument("qasm",                                              help="input .qasm file")
-    parser.add_argument("-o", "--out",                                       help="write the glTF scene to this path (default: stats only, no glTF)")
-    parser.add_argument("--factory",     default="15-to-1",                  help=f"magic state factory: {' | '.join(sorted(flash.FACTORIES))} or custom IxJxK dims (e.g. 6x2x11)")
-    parser.add_argument("--die",         type=int, metavar="WIDTH",          help="die width constraint (rows grow on demand)")
-    parser.add_argument("--factories",   type=int, default=1,                help="factory units (die mode)")
-    parser.add_argument("--sat",         nargs="?", type=int, const=600, metavar="SECONDS", help="SAT-solve uncached regions, per-region budget in seconds (default: cached cells + templates only)")
-    parser.add_argument("--side-ports",  action="store_true",                help="swap through cell side faces (1-D only)")
-    parser.add_argument("--orientation", action="store_true",                help="lay deep cells down (1-D only)")
-    parser.add_argument("--cache-dir",   default=".miniflash-cache",         help="cell cache directory")
-    parser.add_argument("--dump-ir",     action="store_true",                help="also write <name>.program.json")
-    arguments = parser.parse_args()
-
-    factory = arguments.factory
-    if factory not in flash.FACTORIES:
-        try:
-            factory = flash.FactorySpec("custom", *(int(dim) for dim in factory.split("x")))
-        except (TypeError, ValueError):
-            parser.error(f"--factory: {factory!r} is neither a preset ({', '.join(sorted(flash.FACTORIES))}) nor IxJxK dims")
-    program = compile(
-        arguments.qasm,
-        cache_dir=arguments.cache_dir,
-        side_ports=arguments.side_ports,
-        factory=factory,
-        die_dims=(arguments.die, None) if arguments.die else None,
-        factories=arguments.factories,
-        budget_s=arguments.sat if arguments.sat else 600,
-        orientation=arguments.orientation,
-        use_sat=arguments.sat is not None,
-    )
-
-    if arguments.dump_ir:
-        ir_path = (Path(arguments.out) if arguments.out else Path(Path(arguments.qasm).name)).with_suffix(".program.json")
-        if ir_path.parent != Path("."):
-            ir_path.parent.mkdir(parents=True, exist_ok=True)
-        ir_path.write_text(json.dumps(program.to_dict(), indent=1))
-    if arguments.out:
-        gltf_path = Path(arguments.out)
-        if gltf_path.parent != Path("."):
-            gltf_path.parent.mkdir(parents=True, exist_ok=True)
-        flash.write_gltf(program, gltf_path)
-        print(gltf_path)
-    else:
-        stats = program.stats()
-        line = f"miniflash: {Path(arguments.qasm).stem} cube_envelope={stats['cube_envelope']} volume={stats['volume']}"
-        if stats.get("t_count") is not None:
-            line += f" t_count={stats['t_count']} wait_levels={stats['wait_levels']}"
-        print(line)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("circuits", nargs="*", help=".qasm files")
+    ap.add_argument("--list", metavar="FILE", help="also compile the .qasm paths listed in FILE, one per line")
+    ap.add_argument("--solver", choices=list(flash.PRESETS), default="layout", help="ladder step or control (default: layout)")
+    ap.add_argument("--shapes", type=shapes_option, default="default",
+                    help="layout: 'stats' for the shape predicted from the DAG (the default) or the number of smallest-area shapes to compare")
+    ap.add_argument("--extra", type=int, default=6, help="spacing: lane budget per partition beyond the site rows/cols")
+    ap.add_argument("--share", type=float, default=4.0, help="routing: penalty per row or column a route newly loads")
+    ap.add_argument("--seed", type=int, default=0, help="placement: anneal seed")
+    ap.add_argument("--factory", type=flash.Factory.parse, metavar="HxWxT",
+                    help="magic-state factory: H tiles deep, W along the chip side, one state per T steps. "
+                         "Alone: one behind every magic tile. Omitted: unlimited supply")
+    ap.add_argument("--factories", type=int, default=0,
+                    help="F shared factories feeding the whole chip through delivery rings (default --factory 3x3x11); "
+                         "-o draws them")
+    ap.add_argument("-o", "--output", help="render the glTF scene (single circuit)")
+    ap.add_argument("--json", help="save the tile program as JSON (single circuit)")
+    a = ap.parse_args()
+    paths = list(a.circuits) + (Path(a.list).read_text().split() if a.list else [])
+    if not paths:
+        ap.error("no circuits given")
+    if (a.output or a.json) and len(paths) != 1:
+        ap.error("-o/--json take a single circuit")
+    solver = flash.make(a.solver, shapes=a.shapes, extra=a.extra, share=a.share, seed=a.seed,
+                        factory=a.factory, factories=a.factories)
+    w = csv.DictWriter(sys.stdout, fieldnames=FIELDS)
+    w.writeheader()
+    for path in paths:
+        t0 = time.perf_counter()
+        problem = flash.read_qasm(path)
+        program = solver.solve(problem)
+        t1 = time.perf_counter()
+        rep = flash.verify(problem, program, a.factory, a.factories)
+        t2 = time.perf_counter()
+        w.writerow({"circuit": Path(path).stem, "qubits": problem.n_qubits, "pairs": len(problem.pairs), "depth": problem.depth,
+                    "grid": f"{rep.height}x{rep.width}", "steps": rep.steps, "walk_steps": rep.walk_steps, "volume": rep.volume,
+                    "compile_s": round(t1 - t0, 3), "verify_s": round(t2 - t1, 3)})
+        sys.stdout.flush()
+        print(f"{solver.name} {Path(path).stem}: {rep.steps} steps, volume {rep.volume}, {t1 - t0:.2f}s", file=sys.stderr, flush=True)
+        if a.json:
+            program.save(a.json)
+        if a.output:
+            supply = None
+            if a.factories:
+                supply = flash.plan(program, a.factories, a.factory or flash.Factory())
+                for conflict in supply.conflicts:
+                    print(f"supply conflict: {conflict}", file=sys.stderr)
+            flash.write_gltf(program, a.output, supply)
 
 
 if __name__ == "__main__":

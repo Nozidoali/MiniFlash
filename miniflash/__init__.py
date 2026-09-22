@@ -1,52 +1,30 @@
-"""miniflash: compile Clifford+T OpenQASM 2.0 into a lattice-surgery glTF layout.
+"""miniflash: compile Clifford+T OpenQASM 2.0 into a lattice-surgery tile program.
 
-The pipeline runs to the Program IR (parse -> partition -> schedule ->
-floorplan -> synthesis -> program); the IR is the internal contract to the
-backend half of the package, ``gltf.py``: ``build_layout`` validates a
-Program and measures its volumes, ``write_gltf`` renders it to a file. The repo-root
-``main.py`` is the driver + CLI, ``scripts/`` holds the optional
-``download_cache.py`` utility.
-
-The public API mirrors the pipeline stages::
+parse -> Problem (pair DAG) -> Compiler (place, route, space) -> Program (one step
+graph per time step) -> verify -> write_gltf::
 
     import miniflash as flash
 
-    circuit = flash.parse("circuit.qasm")
-    pc = flash.partition(circuit)   # PartitionedCircuit: .regions / .events / .to_text() / .save_png()
-    floorplan, cells, channels = flash.synthesize(pc)
-    program = flash.elaborate(floorplan, cells, events=pc.events, channels=channels)
-    stats = program.stats()                # check -> measure (or flash.build_layout(program))
+    problem = flash.read_qasm("circuit.qasm")
+    program = flash.make("layout", seed=0).solve(problem)
+    report = flash.verify(problem, program)
     flash.write_gltf(program, "layout.gltf")
-
-Every name below is importable both here and from its home module
-(``flash.parse`` is ``miniflash.parse.parse``); the home modules stay the
-reference for docstrings and internals.
 """
-
-from .factory import FACTORIES, FactorySpec, correction_for, get_factory
-from .gltf import write_gltf
-from .lower import build_layout, check_program
+from .circuit import MAGIC, Builder, Pair, Problem, from_circuit, read_qasm, to_dot
 from .parse import parse
-from .partition import partition, split_region
-from .program import Program, elaborate
-from .synthesis import SynthTimeout, SynthUnsat, VerifyFailed, synthesize
+from .mapping import Layout, Mapping
+from .route import Route, Segment, check_route
+from .program import Program, Step, Vertex
+from .solver import Placement, candidate_shapes, compact, place, schedule, space, stats_shape
+from .compiler import LADDER, PRESETS, SOLVERS, Compiler, make
+from .factory import Bill, Factory, charge
+from .supply import Supply, plan
+from .verify import Report, VerifyError, verify
+from .gltf import write_gltf
 
-__version__ = "0.0.1"
+__version__ = "1.0.0a0"
 
-__all__ = [
-    "FACTORIES",
-    "FactorySpec",
-    "Program",
-    "SynthTimeout",
-    "SynthUnsat",
-    "VerifyFailed",
-    "build_layout",
-    "correction_for",
-    "elaborate",
-    "get_factory",
-    "parse",
-    "partition",
-    "split_region",
-    "synthesize",
-    "write_gltf",
-]
+__all__ = ["MAGIC", "Builder", "Pair", "Problem", "from_circuit", "read_qasm", "to_dot", "parse", "Layout", "Mapping",
+           "Route", "Segment", "check_route", "Program", "Step", "Vertex", "Placement", "place", "schedule", "compact",
+           "space", "candidate_shapes", "stats_shape", "LADDER", "PRESETS", "SOLVERS", "Compiler", "make", "Bill",
+           "Factory", "charge", "Supply", "plan", "Report", "VerifyError", "verify", "write_gltf"]
