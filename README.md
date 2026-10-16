@@ -68,24 +68,36 @@ python main.py benchmarks/qualtran/modexp-3.json
 ```python
 hierarchy = flash.Hierarchy.load("benchmarks/qualtran/modexp-3.json")
 compiler = flash.make("layout")
-program = compiler.solve_hierarchy(hierarchy, cell_limit=400)
+program = compiler.solve_hierarchy(hierarchy)
 report = flash.verify(hierarchy.problem, program)
 print(compiler.hierarchy_stats)  # calls, distinct cells, and pairs actually routed
 ```
 
-`--cell-limit` bounds the CX/T pairs per cell (default 400). Reuse requires the
-same pair sequence on the same global qubits; unused program qubits remain
-routing obstacles. Cell steps keep their order and grouping, but calls may
-overlap once their qubits are available. The composer reroutes conflicts or
-waits, enforcing dependencies and magic-state supply across all calls. The
-usual `--factory`, `--factories`, `--shapes`, rendering, and output options apply;
-hierarchical compilation requires a solver with routing enabled.
+Compilation follows the call tree bottom-up, with no size cutoff. It routes each
+distinct leaf (and direct gate run between children), composes each parent from
+its cached children, and caches the parent for reuse up to the root. Leaves
+match exact pair sequences on the same global qubits; parents also preserve
+child boundaries. Unused program qubits remain routing obstacles.
 
-Placement uses each distinct cell's ASAP layers weighted by its call count.
-This preserves interaction frequencies while approximating overlap between
-calls. `--hierarchy-placement flat` uses the full DAG's placement instead, for
-controlled comparisons. The hierarchy loader and output program still expand
-all calls; this path saves repeated optimization work, not that memory cost.
+Child steps keep their order and grouping, but calls may overlap once their
+qubits are available. The composer reroutes conflicts or waits. The root enforces
+dependencies and magic-state supply across all nested calls, then the usual
+partitioning, compaction, and walk passes run. The usual `--factory`,
+`--factories`, `--shapes`, rendering, and output options apply; hierarchical
+compilation requires a solver with routing enabled.
+
+Placement uses each distinct leaf's ASAP layers weighted by its expanded call
+count, so ancestor templates do not double-count gates. This preserves interaction
+frequencies while approximating overlap between calls. `--hierarchy-placement flat`
+uses the full DAG's placement instead, for controlled comparisons. The hierarchy
+loader and output program still expand all calls; cached parent schedules also
+store expanded routes. Reuse saves repeated optimization work, not that memory cost.
+
+`hierarchy_stats` reports all cached `cells`, split into `leaf_cells` and
+`composed_cells`. `calls` counts invocations across all levels, including the root
+and direct gate runs; `leaf_calls` counts just the leaves. `routed_pairs` counts
+pairs sent to the leaf router once per distinct leaf. Parent composition may
+reroute conflicts, and its time is reported separately as `compose_s`.
 
 Run a verified comparison of eight Qualtran circuits (flat, weighted cell
 placement, and cell reuse with flat placement):

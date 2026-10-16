@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from miniflash import Hierarchy, make, verify
 
-DEFAULTS = ["add-16", "modadd-4", "modmul-4", "modexp-3", "qrom-6", "gf2mul-4", "gf2inv-4", "hubbard-2"]
-FIELDS = ["circuit", "seed", "mode", "pairs", "cells", "calls", "routed_pairs", "volume", "steps", "walks",
+DEFAULTS = ["modexp-3", "modmul-4", "gf2inv-4", "modadd-8", "add-16", "hubbard-2", "qrom-6", "gf2mul-8"]
+FIELDS = ["circuit", "seed", "mode", "pairs", "cells", "calls", "leaf_cells", "composed_cells", "leaf_calls", "routed_pairs", "volume", "steps", "walks",
           "load_s", "solve_s", "verify_s", "extract_s", "map_s", "route_s", "compose_s", "windows_s", "compact_s"]
 
 
@@ -26,13 +26,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("circuits", nargs="*", help="benchmark stems or JSON paths")
     ap.add_argument("--seeds", type=int, nargs="+", default=[0])
-    ap.add_argument("--cell-limit", type=int, default=400)
     ap.add_argument("--modes", nargs="+", choices=["flat", "weighted", "hierarchy-flat"], default=["flat", "weighted", "hierarchy-flat"])
     ap.add_argument("--output", type=Path, required=True)
     a = ap.parse_args()
     a.output.parent.mkdir(parents=True, exist_ok=True)
     with a.output.open("w", newline="") as out:
-        writer = csv.DictWriter(out, fieldnames=FIELDS)
+        writer = csv.DictWriter(out, fieldnames=FIELDS, lineterminator="\n")
         writer.writeheader()
         for name in a.circuits or DEFAULTS:
             path = Path(name) if name.endswith(".json") else ROOT / "benchmarks/qualtran" / f"{name}.json"
@@ -44,7 +43,7 @@ def main():
                     compiler = make("layout", seed=seed)
                     started = time.perf_counter()
                     program = (compiler.solve(hierarchy.problem) if mode == "flat" else
-                               compiler.solve_hierarchy(hierarchy, a.cell_limit, "weighted" if mode == "weighted" else "flat"))
+                               compiler.solve_hierarchy(hierarchy, "weighted" if mode == "weighted" else "flat"))
                     solved = time.perf_counter()
                     report = verify(hierarchy.problem, program)
                     checked = time.perf_counter()
@@ -52,6 +51,7 @@ def main():
                     profile = compiler.profile[0]  # default layout uses one predicted shape
                     row = dict(circuit=path.stem, seed=seed, mode=mode, pairs=len(hierarchy.problem.pairs),
                                cells=stats.get("cells", 0), calls=stats.get("calls", 0),
+                               **{key: stats.get(key, 0) for key in ("leaf_cells", "composed_cells", "leaf_calls")},
                                routed_pairs=stats.get("routed_pairs", len(hierarchy.problem.pairs)),
                                volume=report.volume, steps=report.steps, walks=report.walk_steps,
                                load_s=load_s, solve_s=solved - started, verify_s=checked - solved,

@@ -37,7 +37,7 @@ def read_input(path, hierarchical=False):
     return flash.read_qasm(path), None
 
 
-def compile(qasm_path, solver="layout", hierarchical=False, cell_limit=400, hierarchy_placement="weighted", **options):
+def compile(qasm_path, solver="layout", hierarchical=False, hierarchy_placement="weighted", **options):
     """Parse, solve and verify one circuit.
 
     :param qasm_path: str | Path to a .qasm or hierarchy .json file.
@@ -47,7 +47,7 @@ def compile(qasm_path, solver="layout", hierarchical=False, cell_limit=400, hier
     """
     problem, hierarchy = read_input(qasm_path, hierarchical)
     compiler = flash.make(solver, **options)
-    program = (compiler.solve_hierarchy(hierarchy, cell_limit, hierarchy_placement) if hierarchical
+    program = (compiler.solve_hierarchy(hierarchy, hierarchy_placement) if hierarchical
                else compiler.solve(problem))
     report = flash.verify(problem, program, options.get("factory"), options.get("factories", 0))
     return problem, program, report
@@ -57,8 +57,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("circuits", nargs="*", help=".qasm or hierarchy .json files")
     ap.add_argument("--list", metavar="FILE", help="also compile the paths listed in FILE, one per line")
-    ap.add_argument("--hierarchical", action="store_true", help="reuse routed cells from hierarchy JSON inputs")
-    ap.add_argument("--cell-limit", type=int, default=400, help="hierarchical: maximum CX/T pairs per cell (default: 400)")
+    ap.add_argument("--hierarchical", action="store_true", help="compile hierarchy JSON inputs bottom-up")
     ap.add_argument("--hierarchy-placement", choices=["weighted", "flat"], default="weighted",
                     help="hierarchical: place using call-count-weighted cells (default), or the full flat DAG")
     ap.add_argument("--solver", choices=list(flash.PRESETS), default="layout", help="ladder step or control (default: layout)")
@@ -94,14 +93,14 @@ def main():
         ap.error("--windows needs -o")
     solver = flash.make(a.solver, shapes=a.shapes, extra=a.extra, share=a.share, seed=a.seed,
                         factory=a.factory, factories=a.factories)
-    if a.hierarchical and (not solver.routing or a.cell_limit < 1 or any(Path(p).suffix.lower() != ".json" for p in paths)):
-        ap.error("--hierarchical requires JSON inputs, a routing/spacing/placement/layout solver, and a positive --cell-limit")
+    if a.hierarchical and (not solver.routing or any(Path(p).suffix.lower() != ".json" for p in paths)):
+        ap.error("--hierarchical requires JSON inputs, a routing/spacing/placement/layout solver")
     w = csv.DictWriter(sys.stdout, fieldnames=FIELDS)
     w.writeheader()
     for path in paths:
         t0 = time.perf_counter()
         problem, hierarchy = read_input(path, a.hierarchical)
-        program = (solver.solve_hierarchy(hierarchy, a.cell_limit, a.hierarchy_placement) if a.hierarchical
+        program = (solver.solve_hierarchy(hierarchy, a.hierarchy_placement) if a.hierarchical
                    else solver.solve(problem))
         t1 = time.perf_counter()
         rep = flash.verify(problem, program, a.factory, a.factories)

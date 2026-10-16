@@ -1,15 +1,16 @@
-"""Reuse routed cells on one virtual mapping, then compose their steps.
+"""Compile a call tree bottom-up on one virtual mapping.
 
-Cells match exact pair sequences on the same global qubits. All program qubits
+Leaves match exact pair sequences on the same global qubits; parents match their
+ordered children. All program qubits
 remain obstacles when routing a cell. The composer preserves each cell's step
 order and grouping, releases qubits after their last use, and enforces the flat
 pair DAG and magic supply globally. Compaction happens only after composition.
 """
 from __future__ import annotations
 
-from collections import Counter, deque
+from collections import deque
 from dataclasses import dataclass
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from ..circuit import Problem
 from ..hierarchy import Hierarchy, Node
@@ -27,55 +28,88 @@ class Call:
 
 
 @dataclass(frozen=True)
-class Cells:
-    problems: Tuple[Problem, ...]
-    calls: Tuple[Call, ...]
+class Cell:
+    problem: Problem
+    calls: Tuple[Call, ...] = ()
+
+
+@dataclass(frozen=True)
+class Plan:
+    """Interned cells in postorder; call ranges are local to their parent.
+
+    Frequencies count expanded invocations at every level, including the root
+    and direct gate runs. Only leaves contribute gates to the placement proxy.
+    """
+    cells: Tuple[Cell, ...]
+    root: Optional[int]
+    frequencies: Tuple[int, ...]
+    bindings: Dict[Tuple[str, Tuple[int, ...]], int]
 
     def workload(self, n_qubits: int) -> Workload:
-        """Cell-local ASAP layers weighted by call count; no cross-call overlap model."""
-        counts = Counter(call.cell for call in self.calls)
+        """Leaf-local ASAP layers weighted by expanded invocation count."""
         pairs, layers, frequencies = [], [], []
-        for i, cell in enumerate(self.problems):
+        for cell, count in zip(self.cells, self.frequencies):
+            if cell.calls:
+                continue
             offset = len(pairs)
-            layers.extend([[offset + p for p in layer] for layer in cell.layers()])
-            frequencies.extend([counts[i]] * cell.depth)
-            pairs.extend(cell.pairs)
+            layers.extend([[offset + p for p in layer] for layer in cell.problem.layers()])
+            frequencies.extend([count] * cell.problem.depth)
+            pairs.extend(cell.problem.pairs)
         return Workload(Problem.from_pairs(n_qubits, pairs), layers, frequencies)
 
+    def stats(self) -> dict:
+        leaves = [i for i, cell in enumerate(self.cells) if not cell.calls]
+        return dict(cells=len(self.cells), calls=sum(self.frequencies), leaf_cells=len(leaves),
+                    composed_cells=len(self.cells) - len(leaves),
+                    leaf_calls=sum(self.frequencies[i] for i in leaves),
+                    routed_pairs=sum(len(self.cells[i].problem.pairs) for i in leaves),
+                    total_pairs=0 if self.root is None else len(self.cells[self.root].problem.pairs))
 
-def extract(hierarchy: Hierarchy, limit: int = 400) -> Cells:
-    """Cut at the largest calls within `limit` pairs; split intervening runs to fit.
+
+def extract(hierarchy: Hierarchy) -> Plan:
+    """Intern every nonempty call, without a size cutoff.
 
     Single-qubit Cliffords are free in the input pair model and do not enter the
-    cache key. T and T-dagger remain distinct. Reuse never relabels qubits.
+    leaf key. T and T-dagger remain distinct. Parent keys preserve child boundaries
+    as well as global qubits. Repeated bound definitions skip subtree extraction.
     """
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        raise ValueError("cell limit must be a positive integer")
     problem = hierarchy.problem
-    problems, calls, ids = [], [], {}
+    cells, ids, bindings = [], {}, {}
 
-    def run(start, stop):
-        for first in range(start, stop, limit):
-            last = min(first + limit, stop)
-            key = problem.pairs[first:last]
-            if key not in ids:
-                ids[key] = len(problems)
-                problems.append(Problem.from_pairs(problem.n_qubits, key))
-            calls.append(Call(ids[key], first, last))
+    def intern(start, stop, calls=()):
+        pairs = problem.pairs[start:stop]
+        key = ("parent", tuple(call.cell for call in calls)) if calls else ("leaf", pairs)
+        if key not in ids:
+            ids[key] = len(cells)
+            cells.append(Cell(Problem.from_pairs(problem.n_qubits, pairs), tuple(calls)))
+        return ids[key]
 
     def visit(node: Node):
-        if node.stop - node.start <= limit:
-            run(node.start, node.stop)
-            return
+        binding = (node.name, node.qubits)
+        if binding in bindings:
+            return bindings[binding]
+        children = [child for child in node.children if child.stop > child.start]
+        calls = []
         at = node.start
-        for child in node.children:
-            run(at, child.start)
-            visit(child)
+        for child in children:
+            if at < child.start:
+                calls.append(Call(intern(at, child.start), at - node.start, child.start - node.start))
+            calls.append(Call(visit(child), child.start - node.start, child.stop - node.start))
             at = child.stop
-        run(at, node.stop)
+        if children and at < node.stop:
+            calls.append(Call(intern(at, node.stop), at - node.start, node.stop - node.start))
+        cell = intern(node.start, node.stop, calls)
+        bindings[binding] = cell
+        return cell
 
-    visit(hierarchy.tree)
-    return Cells(tuple(problems), tuple(calls))
+    root = visit(hierarchy.tree) if problem.pairs else None
+    frequencies = [0] * len(cells)
+    if root is not None:
+        frequencies[root] = 1
+    for i in reversed(range(len(cells))):
+        for call in cells[i].calls:
+            frequencies[call.cell] += frequencies[i]
+    return Plan(tuple(cells), root, tuple(frequencies), bindings)
 
 
 def _shortest(problem: Problem, mapping: Mapping, i: int, occupied: Set[Coord],
@@ -124,7 +158,7 @@ def _fit(step: List[Route], problem: Problem, mapping: Mapping, occupied: Set[Co
     return placed
 
 
-def compose(problem: Problem, mapping: Mapping, cells: Cells, templates: List[Schedule],
+def compose(problem: Problem, mapping: Mapping, calls: Sequence[Call], templates: List[Schedule],
             magic_cooldown: int = 1, factories: int = 0, period: int = 11) -> Schedule:
     """Schedule ready cell steps in call order, with global dependencies/resources.
 
@@ -134,7 +168,7 @@ def compose(problem: Problem, mapping: Mapping, cells: Cells, templates: List[Sc
     """
     groups, predecessors = [], []
     owner = [-1] * len(problem.pairs)
-    for call in cells.calls:
+    for call in calls:
         previous = None
         for step in templates[call.cell]:
             if not step:
