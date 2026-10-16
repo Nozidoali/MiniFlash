@@ -39,13 +39,36 @@ from ..mapping import Coord, Layout, Mapping
 COLL, LANE, LEN = 6.0, 6.0, 0.25
 
 
-def spectral_order(problem: Problem, site_rows: int, site_cols: int) -> Dict[int, Tuple[int, int]]:
+@dataclass(frozen=True)
+class Workload:
+    """Distinct placement layers and their execution counts, e.g. reusable cells.
+
+    This preserves interaction frequencies and weights the layer cost without
+    expanding repeated calls. Cell-local layers do not model cross-call overlap.
+    """
+    problem: Problem
+    layers: List[List[int]]
+    frequencies: List[int]
+
+    def interaction(self) -> Dict[Tuple[int, int], int]:
+        edges: Dict[Tuple[int, int], int] = {}
+        for layer, count in zip(self.layers, self.frequencies):
+            for i in layer:
+                pair = self.problem.pairs[i]
+                if not pair.is_magic:
+                    edge = tuple(sorted(pair.qubits))
+                    edges[edge] = edges.get(edge, 0) + count
+        return edges
+
+
+def spectral_order(problem: Problem, site_rows: int, site_cols: int,
+                   workload: Optional[Workload] = None) -> Dict[int, Tuple[int, int]]:
     """Qubit -> virtual site on a site_rows x site_cols array from the Laplacian's two
     smallest nontrivial modes: the Fiedler vector ranks rows, the next mode columns."""
     n = problem.n_qubits
     adjacency = np.full((n, n), 1e-3)
     np.fill_diagonal(adjacency, 0.0)
-    for (a, b), w in problem.interaction().items():
+    for (a, b), w in (workload.interaction() if workload is not None else problem.interaction()).items():
         adjacency[a, b] += w
         adjacency[b, a] += w
     laplacian = np.diag(adjacency.sum(1)) - adjacency
@@ -64,8 +87,9 @@ def spectral_order(problem: Problem, site_rows: int, site_cols: int) -> Dict[int
 class _Proxy:
     """Layered routing proxy with delta re-scoring per move."""
 
-    def __init__(self, problem: Problem, mapping: Mapping, weights=(COLL, LANE, LEN)):
-        self.problem = problem
+    def __init__(self, problem: Problem, mapping: Mapping, weights=(COLL, LANE, LEN),
+                 workload: Optional[Workload] = None):
+        self.problem = workload.problem if workload is not None else problem
         self.mapping = mapping
         self.w_coll, self.w_lane, self.w_len = weights
         self.tiles = dict(mapping.qubits)
@@ -75,12 +99,13 @@ class _Proxy:
         self.side_magic = [t for t in self.magic if t[1] in (0, mapping.width - 1)]
         self.lane_rows = {r for r in range(mapping.height) if r not in self.site_rows}
         self.lane_cols = {c for c in range(mapping.width) if c not in self.site_cols}
-        self.layers = problem.layers()
+        self.layers = workload.layers if workload is not None else problem.layers()
+        self.frequencies = workload.frequencies if workload is not None else [1] * len(self.layers)
         self.of_qubit: Dict[int, List[int]] = {q: [] for q in problem.qubits}
         for li, layer in enumerate(self.layers):
             seen = set()
             for i in layer:
-                for q in problem.pairs[i].qubits:
+                for q in self.problem.pairs[i].qubits:
                     if q not in seen:
                         self.of_qubit[q].append(li)
                         seen.add(q)
@@ -170,7 +195,7 @@ class _Proxy:
                 seen[t] = i
             coll += len(hit)
         lanes = len(rows - self.site_rows) + len(cols - self.site_cols)
-        return self.w_coll * coll + self.w_lane * lanes + self.w_len * length
+        return self.frequencies[li] * (self.w_coll * coll + self.w_lane * lanes + self.w_len * length)
 
     def swap_delta(self, a: int, b: Optional[int], site_b: Coord) -> Tuple[float, List[int], Dict[int, float]]:
         """Cost change if qubit a moves to site_b and qubit b (if any) to a's site."""
@@ -210,29 +235,30 @@ def square_shape(n_qubits: int, shape: Optional[Tuple[int, int]] = None) -> Tupl
 
 def place(problem: Problem, shape: Optional[Tuple[int, int]] = None, spectral: bool = False, seed: int = 0,
           iters: Optional[int] = None, anneal: bool = True,
-          weights: Tuple[float, float, float] = (COLL, LANE, LEN)) -> Placement:
+          weights: Tuple[float, float, float] = (COLL, LANE, LEN), workload: Optional[Workload] = None) -> Placement:
     """Index order on the sparse square, or (`spectral`) the spectral seed and anneal on
     the paired-lane array, of the given shape (the smallest square by default);
-    `iters` defaults to 100 proposals per qubit."""
+    `iters` defaults to 100 proposals per qubit. `workload` optionally replaces the
+    flat layers with weighted distinct layers for spectral seeding and annealing."""
     n = problem.n_qubits
     site_rows, site_cols = square_shape(n, shape)
     if not spectral:
         return Placement(Mapping.sparse(site_rows, site_cols, n), Layout.identity(n, (site_rows, site_cols)), 0.0, 0.0)
-    order = spectral_order(problem, site_rows, site_cols)
+    order = spectral_order(problem, site_rows, site_cols, workload)
     base = Mapping.paired(site_rows, site_cols, n)
     full = Mapping.paired(site_rows, site_cols, site_rows * site_cols)      # every site filled, to read the geometry
     row_pos = sorted({t[0] for t in full.qubits.values()})
     col_pos = sorted({t[1] for t in full.qubits.values()})
     site_of = {(i, j): (row_pos[i], col_pos[j]) for i in range(site_rows) for j in range(site_cols)}
     mapping = Mapping(base.height, base.width, {q: site_of[s] for q, s in order.items()}, base.magic)
-    proxy = _Proxy(problem, mapping, weights)
+    proxy = _Proxy(problem, mapping, weights, workload)
     initial_cost = proxy.total
     if anneal and n > 1:
         rng = random.Random(seed)
         iters = iters if iters is not None else 100 * n
         sites = list(site_of.values())
         occupant = {t: q for q, t in proxy.tiles.items()}
-        t0, t1 = max(1.0, 0.05 * proxy.total / max(1, len(proxy.layers))), 0.05
+        t0, t1 = max(1.0, 0.05 * proxy.total / max(1, sum(proxy.frequencies))), 0.05
         for it in range(iters):
             temp = t0 * (t1 / t0) ** (it / max(1, iters - 1))
             a = rng.randrange(n)

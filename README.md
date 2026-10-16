@@ -50,8 +50,49 @@ flash.write_gltf(program, "tof3.gltf")
 
 Without `--factory`, magic supply is unlimited. Single-qubit Cliffords are free.
 
-`benchmarks/` holds 183 circuits (GHZ, BV, DJ, QFT, random Clifford, graph states,
-Galois-field multipliers, Toffoli, ...).
+`benchmarks/` holds 206 circuits (GHZ, BV, DJ, QFT, random Clifford, graph states,
+Galois-field multipliers, Toffoli, ...). Those in `benchmarks/qualtran/` also carry
+the call tree of the Qualtran bloq they come from; see `benchmarks/README.md`.
+
+## Hierarchical compilation
+
+Compile repeated subroutines once on a common floorplan, then compose their
+routes before partitioning and compaction:
+
+```bash
+python main.py benchmarks/qualtran/modexp-3.json --hierarchical --json out/modexp.json
+# The same input compiled as a flat DAG:
+python main.py benchmarks/qualtran/modexp-3.json
+```
+
+```python
+hierarchy = flash.Hierarchy.load("benchmarks/qualtran/modexp-3.json")
+compiler = flash.make("layout")
+program = compiler.solve_hierarchy(hierarchy, cell_limit=400)
+report = flash.verify(hierarchy.problem, program)
+print(compiler.hierarchy_stats)  # calls, distinct cells, and pairs actually routed
+```
+
+`--cell-limit` bounds the CX/T pairs per cell (default 400). Reuse requires the
+same pair sequence on the same global qubits; unused program qubits remain
+routing obstacles. Cell steps keep their order and grouping, but calls may
+overlap once their qubits are available. The composer reroutes conflicts or
+waits, enforcing dependencies and magic-state supply across all calls. The
+usual `--factory`, `--factories`, `--shapes`, rendering, and output options apply;
+hierarchical compilation requires a solver with routing enabled.
+
+Placement uses each distinct cell's ASAP layers weighted by its call count.
+This preserves interaction frequencies while approximating overlap between
+calls. `--hierarchy-placement flat` uses the full DAG's placement instead, for
+controlled comparisons. The hierarchy loader and output program still expand
+all calls; this path saves repeated optimization work, not that memory cost.
+
+Run a verified comparison of eight Qualtran circuits (flat, weighted cell
+placement, and cell reuse with flat placement):
+
+```bash
+OPENBLAS_NUM_THREADS=1 python scripts/benchmark_hierarchy.py --output out/hierarchy.csv
+```
 
 ## License
 

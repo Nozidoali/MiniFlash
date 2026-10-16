@@ -1,6 +1,25 @@
+# Python
 __pycache__/
+*.py[cod]
 *.egg-info/
 build/
+dist/
 .venv/
-*.gltf
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local dependencies and generated MiniFlash artifacts
+/lassynth/
+.miniflash-cache/
 out/
+*.gltf
+*.glb
+/port_profile.csv
+/scmr-review.html
+
+# Editor / tooling
+.vscode/
+.claude/worktrees/
+.claude/settings.local.json

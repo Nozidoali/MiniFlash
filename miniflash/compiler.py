@@ -8,7 +8,7 @@
     Compiler(..., layout="stats")                # + layout selection: the shape predicted from the DAG
     Compiler(..., layout=3)                      # or compare the three smallest-area shapes
 
-Every configuration runs the same three passes, each a function in miniflash/solver:
+Every configuration runs the same three passes, each a function in miniflash/synthesis:
 `placement.place` (index order or placed), `schedule.schedule` or `routing.route`
 (the schedule, and for the router the partition windows), and `spacing.space` (a
 plain program, one compaction, or partitions with walks). `layout` repeats them per
@@ -26,16 +26,18 @@ import functools
 import time
 from typing import List, Optional, Tuple, Union
 
-from .solver import routing
+from .synthesis import routing
 from .circuit import Problem
+from .hierarchy import Hierarchy
 from .mapping import Layout, Mapping
-from .solver.layout import Shape, candidate_shapes, stats_shape
-from .solver.placement import COLL, LANE, LEN, Placement, place
+from .synthesis import hierarchical
+from .synthesis.layout import Shape, candidate_shapes, stats_shape
+from .synthesis.placement import COLL, LANE, LEN, Placement, Workload, place
 from .factory import Factory, supply_limits
 from .program import Program
 from .route import Schedule
-from .solver.schedule import schedule
-from .solver.spacing import Partition, budgets, space
+from .synthesis.schedule import schedule
+from .synthesis.spacing import Partition, budgets, cut, space
 
 LADDER = ("vanilla", "dependency", "routing", "spacing", "placement", "layout")
 DEFAULTS = dict(extra=6, share=4.0, seed=0)
@@ -88,6 +90,7 @@ class Compiler:
         self.initial_cost = self.final_cost = 0.0
         self.tried: List[dict] = []
         self.profile: List[dict] = []
+        self.hierarchy_stats: dict = {}
 
     @property
     def name(self) -> str:
@@ -117,15 +120,17 @@ class Compiler:
             suffix += f"-extra{self.extra}"
         if self.share != DEFAULTS["share"] and self.routing:
             suffix += f"-share{self.share:g}"
+        if self.hierarchy_stats:
+            suffix += "-hierarchical"
         return label + suffix
 
     # ---- the three passes ------------------------------------------------------------
-    def map(self, problem: Problem, shape: Optional[Shape] = None) -> Mapping:
+    def map(self, problem: Problem, shape: Optional[Shape] = None, workload: Optional[Workload] = None) -> Mapping:
         """Mapping and layout for one shape: fixed, placed, or index order."""
         if isinstance(self.placement, Placement):
             placed = self.placement
         else:
-            placed = place(problem, shape, bool(self.placement), self.seed, self.iters, self.anneal, self.weights)
+            placed = place(problem, shape, bool(self.placement), self.seed, self.iters, self.anneal, self.weights, workload)
         self.mapping, self.layout = placed.mapping, placed.layout
         self.initial_cost, self.final_cost = placed.initial_cost, placed.final_cost
         return placed.mapping
@@ -158,35 +163,77 @@ class Compiler:
             program, _ = space(problem, mapping, steps)
         return program
 
-    def solve_shape(self, problem: Problem, shape: Optional[Shape] = None) -> Program:
+    def solve_shape(self, problem: Problem, shape: Optional[Shape] = None,
+                    cells: Optional[hierarchical.Cells] = None, workload: Optional[Workload] = None) -> Program:
         """One compilation on one shape, timed into `profile`."""
         t0 = time.perf_counter()
-        mapping = self.map(problem, shape)
+        mapping = self.map(problem, shape, workload)
         t1 = time.perf_counter()
-        steps = self.route(problem, mapping)
+        if cells is None:
+            steps = self.route(problem, mapping)
+            compose_s = windows_s = 0.0
+            self.hierarchy_stats = {}
+        else:
+            templates = [routing.route(cell, mapping, mapping.height, mapping.width, self.share, self.exact)[0]
+                         for cell in cells.problems]
+            routed = time.perf_counter()
+            steps = hierarchical.compose(problem, mapping, cells, templates, *supply_limits(self.factory, self.factories))
+            composed = time.perf_counter()
+            # Cell windows cannot be reused: overlap/rerouting changes loaded lines.
+            self.windows = (cut(mapping, steps, *self.budgets(mapping)) or [(0, 0)]) if self.spacing is True else []
+            compose_s = composed - routed
+            windows_s = time.perf_counter() - composed
+            self.hierarchy_stats = {"calls": len(cells.calls), "cells": len(cells.problems),
+                                    "routed_pairs": sum(len(cell.pairs) for cell in cells.problems),
+                                    "total_pairs": len(problem.pairs)}
         t2 = time.perf_counter()
         program = self.build(problem, mapping, steps)
         t3 = time.perf_counter()
         self.shape = shape if shape is not None else (self.layout.site_rows, self.layout.site_cols)
-        self.profile.append({"map_s": t1 - t0, "route_s": t2 - t1, "windows_s": 0.0, "compact_s": t3 - t2, "total_s": t3 - t0,
+        self.profile.append({"map_s": t1 - t0, "route_s": t2 - t1 - compose_s - windows_s,
+                             "compose_s": compose_s, "windows_s": windows_s, "compact_s": t3 - t2, "total_s": t3 - t0,
                              "shape": list(self.shape), "grid": [program.height, program.width],
-                             "steps": len(program.steps), "volume": program.volume})
+                             "steps": len(program.steps), "volume": program.volume, **self.hierarchy_stats})
         return program
 
     def solve(self, problem: Problem) -> Program:
+        return self._solve(problem)
+
+    def solve_hierarchy(self, hierarchy: Hierarchy, cell_limit: int = 400,
+                        placement_mode: str = "weighted") -> Program:
+        """Route exact reusable cells, compose, then apply the usual spacing passes.
+
+        Requires routing=True. `weighted` placement uses cell-local layers weighted
+        by call counts; `flat` uses the full DAG for controlled comparisons. Shape
+        selection still uses the full DAG. Hierarchy and output remain expanded.
+        """
+        if not self.routing:
+            raise ValueError("hierarchical compilation requires routing=True")
+        if placement_mode not in ("weighted", "flat"):
+            raise ValueError("hierarchy placement must be 'weighted' or 'flat'")
+        t0 = time.perf_counter()
+        cells = hierarchical.extract(hierarchy, cell_limit)
+        workload = cells.workload(hierarchy.n_qubits) if placement_mode == "weighted" else None
+        extract_s = time.perf_counter() - t0
+        program = self._solve(hierarchy.problem, cells, workload)
+        self.hierarchy_stats.update(cell_limit=cell_limit, placement_mode=placement_mode, extract_s=extract_s)
+        return program
+
+    def _solve(self, problem: Problem, cells: Optional[hierarchical.Cells] = None,
+               workload: Optional[Workload] = None) -> Program:
         self.tried, self.profile = [], []
         if self.layout_mode is None:
-            return self.solve_shape(problem, self.shape_option)
+            return self.solve_shape(problem, self.shape_option, cells, workload)
         shapes = [stats_shape(problem)] if self.layout_mode == "stats" else candidate_shapes(problem.n_qubits, self.layout_mode, squarest=True)
         best = None
         for shape in shapes:
-            program = self.solve_shape(problem, shape)
+            program = self.solve_shape(problem, shape, cells, workload)
             self.tried.append({"shape": shape, "grid": (program.height, program.width), "steps": len(program), "volume": program.volume})
             if best is None or program.volume < best[0].volume:
                 best = (program, shape, self.layout, self.mapping, self.partitions, self.windows,
-                        self.keep_rows, self.keep_cols, self.initial_cost, self.final_cost)
+                        self.keep_rows, self.keep_cols, self.initial_cost, self.final_cost, self.hierarchy_stats)
         (program, self.shape, self.layout, self.mapping, self.partitions, self.windows,
-         self.keep_rows, self.keep_cols, self.initial_cost, self.final_cost) = best
+         self.keep_rows, self.keep_cols, self.initial_cost, self.final_cost, self.hierarchy_stats) = best
         return program
 
 

@@ -240,7 +240,7 @@ def test_rearrange_partitions_walks_and_verifies():
 
 
 def test_walk_steps_move_one_tile_per_axis_without_collision():
-    from miniflash.solver.spacing import walk_steps
+    from miniflash.synthesis.spacing import walk_steps
     a = Mapping(6, 6, {0: (0, 0), 1: (0, 2), 2: (2, 0), 3: (2, 2)})
     b = Mapping(6, 6, {0: (0, 0), 1: (0, 1), 2: (3, 0), 3: (3, 4)})
     steps = walk_steps(a, b)
@@ -267,7 +267,7 @@ def test_sharelane_respects_budget_and_verifies():
 
 
 def test_sharelane_penalty_prefers_loaded_lanes():
-    from miniflash.solver.routing import lines_of
+    from miniflash.synthesis.routing import lines_of
     # two CX pairs in one step whose candidates can share a lane row: with a penalty the second
     # route reuses the first one's row instead of opening a fresh one
     p = Problem.from_pairs(8, [Pair(0, 2, "cx"), Pair(1, 3, "cx")])   # k=3: q0 (2,2) q1 (2,4) q2 (2,6) q3 (4,2)
@@ -289,7 +289,7 @@ def test_interaction_graph_counts_cx_only():
 
 
 def test_spectral_seed_places_interacting_qubits_together():
-    from miniflash.solver.placement import spectral_order
+    from miniflash.synthesis.placement import spectral_order
     # two tight cliques {0,1,2,3} and {4,5,6,7}: each must occupy a compact half of the 3x3 site array
     pairs = [Pair(a, b, "cx") for a in range(4) for b in range(4) if a != b] + \
             [Pair(a, b, "cx") for a in range(4, 8) for b in range(4, 8) if a != b]

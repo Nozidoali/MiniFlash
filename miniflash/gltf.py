@@ -219,7 +219,11 @@ def _pack_shared_mesh():
     return bytes(buffer), len(position_bytes), index_offset, len(index_bytes)
 
 
-def write_gltf(program, path, supply=None):
+def _inside(position, lo, hi):
+    return all(l <= x <= h for x, l, h in zip(position, lo, hi))
+
+
+def write_gltf(program, path, supply=None, overlays=(), carve=False):
     """Render a Program as a glTF 2.0 scene file.
 
     Materials: red/blue parity pipes, grey cubes, yellow Hadamard, green magic, orange walks.
@@ -227,10 +231,36 @@ def write_gltf(program, path, supply=None):
     :param program: Program.
     :param path: str | Path of the output ``.gltf``.
     :param supply: Supply | None; draws factories and deliveries.
+    :param overlays: iterable of (lo, hi, rgba) boxes in cube coordinates, lo and hi the
+        inclusive low and high cube corners, drawn with their own colour; an alpha below
+        1 makes the box translucent. See :func:`miniflash.resynthesis.viz.boxes`.
+    :param carve: bool; drop every pipe and cube inside an overlay, so the overlays stand
+        as opaque cells and only the program outside them remains (the coarse view).
     :returns: None.
     """
     pipes, cubes, magic = lower(program, supply)
     boxes = factory_boxes(program, supply) if supply is not None else []
+    overlays = [(tuple(lo), tuple(hi), tuple(rgba)) for lo, hi, rgba in overlays]
+    if carve and overlays:
+        def outside(*positions):
+            return not any(all(_inside(x, lo, hi) for x in positions) for lo, hi, _ in overlays)
+        pipes = [pipe for pipe in pipes if outside(pipe.lo, pipe.hi)]
+        cubes = [c for c in cubes if outside(c)]
+        magic = [m for m in magic if outside(m)]
+    write_scene(path, pipes, cubes, magic, boxes, overlays)
+
+
+def write_scene(path, pipes, cubes, magic, boxes=(), overlays=()):
+    """Write pipes, cubes, magic boxes, factory boxes and overlays as a glTF 2.0 file.
+
+    :param pipes: list of _Pipe.
+    :param cubes: cube positions drawn grey.
+    :param magic: cube positions drawn green.
+    :param boxes: (lo, hi) corners drawn green, hi exclusive.
+    :param overlays: (lo, hi, rgba) boxes, hi inclusive, each colour its own material.
+    :returns: None.
+    """
+    overlays = [(tuple(lo), tuple(hi), tuple(rgba)) for lo, hi, rgba in overlays]
     pipe_boxes = _collect_pipe_boxes(pipes)
     buffer, position_bytes_length, index_offset, index_bytes_length = _pack_shared_mesh()
 
@@ -253,8 +283,15 @@ def write_gltf(program, path, supply=None):
             {"pbrMetallicRoughness": {"baseColorFactor": [0.15, 0.75, 0.25, 1.0]}},
             {"pbrMetallicRoughness": {"baseColorFactor": [1.00, 0.50, 0.05, 1.0]}},
         ],
-        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": material}]} for material in range(6)],
     }
+    palette = list(dict.fromkeys(rgba for _, _, rgba in overlays))
+    for rgba in palette:
+        material = {"pbrMetallicRoughness": {"baseColorFactor": [float(x) for x in rgba]}, "doubleSided": True}
+        if rgba[3] < 1.0:
+            material["alphaMode"] = "BLEND"
+        root["materials"].append(material)
+    root["meshes"] = [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": material}]}
+                      for material in range(len(root["materials"]))]
 
     nodes = []
     for middle, material, axis in pipe_boxes:
@@ -265,6 +302,9 @@ def write_gltf(program, path, supply=None):
         nodes.append({"mesh": 4, "translation": [float(coordinate) for coordinate in position], "scale": [1.0, 1.0, 1.0]})
     for lo, hi in boxes:
         nodes.append({"mesh": 4, "translation": [float(x) for x in lo], "scale": [float(h - l) for l, h in zip(lo, hi)]})
+    for lo, hi, rgba in overlays:
+        nodes.append({"mesh": 6 + palette.index(rgba), "translation": [float(x) for x in lo],
+                      "scale": [float(h - l + 1) for l, h in zip(lo, hi)]})
 
     # root node rotates -90 deg about X so K (time) renders upward (+Y),
     # matching the lattice-surgery convention; J recedes into the screen.
