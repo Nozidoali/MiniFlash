@@ -59,7 +59,8 @@ import miniflash as flash
 circuit = flash.parse("circuit.qasm")
 pc = flash.partition(circuit)          # PartitionedCircuit: .regions / .events / .to_text() / .save_png()
 floorplan, cells, channels = flash.synthesize(pc)
-program = flash.elaborate(floorplan, cells, events=pc.events, channels=channels)
+program = flash.elaborate(floorplan, cells, events=pc.events, channels=channels,
+                          factory=flash.get_factory("15-to-1"), factories=6)
 
 stats = program.stats()                             # check -> measure
 flash.write_gltf(program, "layout.gltf")
@@ -67,3 +68,21 @@ flash.write_gltf(program, "layout.gltf")
 import json
 json.dump(program.stats(), open("stats.json", "w"), indent=2)   # volumes, pauli frames, T corrections
 ```
+
+## Factory layout policy
+
+With `--factory-mode` omitted, `--factories F` selects `in_place` for F <= 2
+and `backside_horizontal` for F > 2. The factory count defaults to 1.
+Explicit choices are `in_place`, `backside_vertical`, and
+`backside_horizontal` (four empty patch rows below the compute footprint).
+The old per-group mixed injection policy is replaced by a checked physical
+layout for the whole program. In-place reserves F sites but enables only
+min(2, F); both backside layouts enable F.
+
+```bash
+python main.py circuit.qasm --factories 6
+python main.py circuit.qasm --factories 6 --factory-mode backside_vertical
+```
+
+See [factory layouts and migration](docs/factory_modes.rst) for physical
+accounting, JSON compatibility, and unsupported orientation/port options.

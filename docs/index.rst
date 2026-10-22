@@ -41,6 +41,7 @@ ISCA 2024).
    :caption: Getting Started
 
    quickstart
+   factory_modes
 
 .. toctree::
    :hidden:

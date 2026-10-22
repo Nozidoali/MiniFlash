@@ -67,16 +67,19 @@ CLI Reference
      - magic state factory: ``15-to-1`` | ``t-cultivation`` | ``external``
        or custom ``IxJxK`` dims (e.g. ``6x2x11``)
    * - ``--die WIDTH``
-     - die width constraint (rows grow on demand)
+     - initial cell synthesis width; the final physical rectangle can grow
    * - ``--factories``
-     - number of factory units (die mode)
+     - positive reserved factory count F (default 1)
+   * - ``--factory-mode``
+     - ``in_place``, ``backside_vertical``, or ``backside_horizontal``;
+       omitted: in-place for F <= 2, horizontal backside otherwise
    * - ``--sat [SECONDS]``
      - SAT-solve uncached regions, per-region budget in seconds
        (default: cached cells + templates only)
    * - ``--side-ports``
-     - swap through cell side faces (1-D only)
+     - rejected by the physical-layout backend (ordinary K-face ports required)
    * - ``--orientation``
-     - lay deep cells down (1-D only)
+     - rejected by the physical-layout backend (upright cells required)
    * - ``--cache-dir``
      - cell cache directory (default ``.miniflash-cache``)
    * - ``--dump-ir``

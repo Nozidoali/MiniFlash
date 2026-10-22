@@ -1,6 +1,6 @@
 """The glTF backend: materialized pipes to a self-contained scene file.
 
-:func:`write_gltf` re-runs the lowering from :mod:`miniflash.lower` with
+:func:`write_gltf` validates and renders the stored physical plan with
 real pipes and emits glTF 2.0 — red/blue parity pipes, grey junction
 cubes, yellow Hadamard slabs, green magic-state volume.
 """
@@ -8,7 +8,6 @@ import base64
 import json
 import struct
 
-from .lower import _Extent, _layout, _pipes_of, _plan
 from .synthesis import STRIDE
 
 _UNIT_POSITIONS = ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1))
@@ -75,12 +74,10 @@ def write_gltf(program, path):
     :param path: str | Path of the output ``.gltf``.
     :returns: None.
     """
-    plan = _plan(program)
-    pipes = sorted(_pipes_of(program, plan), key=lambda pipe: (pipe.lo, pipe.hi, pipe.axis))
-    extent = _Extent()
-    for pipe in pipes:
-        extent.add(pipe)
-    layout = _layout(program, plan, extent)
+    from .physical import pipes_of, statistics, production_boxes
+    layout = statistics(program)
+    pipes = sorted(pipes_of(program), key=lambda pipe: (pipe.lo, pipe.hi, pipe.axis))
+    layout["factory_boxes"] = list(production_boxes(program))
     pipe_boxes = _collect_pipe_boxes(pipes)
     cubes = _collect_cubes(pipes)
     buffer, position_bytes_length, index_offset, index_bytes_length = _pack_shared_mesh()

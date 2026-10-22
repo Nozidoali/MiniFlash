@@ -8,3 +8,10 @@ build/
 out/
 docs/_build/
 .bench-stage/
+
+# Local experiments, reports and analysis (not part of the source distribution).
+/experiments/
+/local_reports/
+/reports/
+/analysis/
+/benchmark-results/

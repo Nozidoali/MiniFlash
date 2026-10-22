@@ -148,14 +148,15 @@ def _check_injections(program):
 def check_program(program):
     """Check Program IR consistency before lowering.
 
-    Net endpoints must match cell pins, move levels must fit channel tracks,
-    1-D jogs must not overlap on a (level, plane) corridor, die-mode macros
-    must fit the die width.
+    Replay the stored physical plan: cell pins and data positions must remain
+    continuous, occupied routes must not conflict, and each injection must
+    consume an available factory token.
 
     :param program: Program.
     :returns: list[str] error messages (empty = valid).
     """
-    return _check_nets(program) + _check_channels(program) + _check_die(program) + _check_injections(program)
+    from .physical import check
+    return check(program)
 
 @dataclass
 class _Bank:
@@ -695,19 +696,12 @@ def _layout(program, plan, extent):
     return layout
 
 def build_layout(program):
-    """Check a Program and measure its geometry: volumes and extents, no pipes.
-
-    Streams the pipe geometry through an extent fold — O(1) memory;
-    :func:`write_gltf` collects the same stream into real pipes.
+    """Validate a stored physical plan and measure allocated area and runtime.
 
     :param program: Program.
-    :returns: layout dict — volume, cube_envelope, bbox, route_stats; plus
-        compute_volume, factory_boxes, t_count and wait_levels when the
-        circuit has injections.
+    :returns: layout dict including factory_mode, allocated_area_patches,
+        runtime_steps, patch_cell_slices and volume. Factory area is included.
     :raises RuntimeError: when the IR check fails.
     """
-    plan = _plan(program)
-    extent = _Extent()
-    for pipe in _pipes_of(program, plan):
-        extent.add(pipe)
-    return _layout(program, plan, extent)
+    from .physical import statistics
+    return statistics(program)

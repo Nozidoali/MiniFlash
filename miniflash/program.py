@@ -12,8 +12,7 @@ correction tables. The IR round-trips through JSON via ``to_dict`` /
 from dataclasses import dataclass, field
 
 from .synthesis import Cell
-from .floorplan import place_injections
-from .factory import FactorySpec, correction_for
+from .factory import FactorySpec
 
 
 def _deep_tuple(value):
@@ -112,6 +111,8 @@ class Program:
     factory: object = None
     #: factory units available to the machine
     factories: int = 0
+    factory_mode: str = None
+    physical_layout: object = None
 
 
     def to_dict(self):
@@ -125,6 +126,8 @@ class Program:
             "rows": self.rows,
             "factory": {"name": self.factory.name, "dim_i": self.factory.dim_i, "dim_j": self.factory.dim_j, "interval_k": self.factory.interval_k, "render": self.factory.render} if self.factory else None,
             "factories": self.factories,
+            "factory_mode": self.factory_mode,
+            "physical_layout": self.physical_layout,
 
             "num_qubits": self.num_qubits,
             "magic_column": self.magic_column,
@@ -145,6 +148,12 @@ class Program:
         :param data: dict from :meth:`to_dict`.
         :returns: Program.
         """
+        from .physical import validate_mode
+        if 'factory_mode' not in data:
+            raise ValueError("Legacy Program JSON has no physical factory mode; recompile the source QASM")
+        validate_mode(data.get("factory_mode"))
+        if not isinstance(data.get("physical_layout"), dict):
+            raise ValueError("Program JSON requires a physical layout; recompile legacy inputs")
         def ref_load(kind, ref):
             if kind == "cell":
                 return Cell.from_dict(ref)
@@ -155,6 +164,8 @@ class Program:
             rows=data.get("rows", 0),
             factory=FactorySpec(**data["factory"]) if data.get("factory") else None,
             factories=data.get("factories", 0),
+            factory_mode=data["factory_mode"],
+            physical_layout=data["physical_layout"],
             num_qubits=data["num_qubits"],
             magic_column=data["magic_column"],
             magic_sides=data.get("magic_sides", 1),
@@ -171,40 +182,15 @@ class Program:
     def stats(self):
         """Compile-quality metrics of this Program: volumes, parity frames, corrections.
 
-        Lowers the IR internally to measure geometry (extents only — O(1)
-        memory, no pipes materialized).
+        Replays the stored physical plan and measures its allocated rectangle.
+        No placement search or pipe rendering is repeated.
 
-        :returns: dict — route_stats, volume, cube_envelope, bbox,
-            pauli_frames; die_dims when die-constrained; factory, t_count,
-            wait_levels, compute_volume and per-injection corrections when the
-            circuit has T gates.
+        :returns: dict with factory mode, validated geometry, allocated patch
+            area, runtime steps, patch_cell_slices and native volume (eight
+            times patch_cell_slices). Factory space is included once.
         """
-        from .lower import build_layout
-
-        layout = build_layout(self)
-        cell_macros = [macro for macro in self.macros if macro.kind == "cell"]
-        injection_macros = [macro for macro in self.macros if macro.kind == "injection"]
-        factory_spec = self.factory
-
-        stats = {"route_stats": layout["route_stats"], "volume": layout["volume"], "cube_envelope": layout["cube_envelope"], "bbox": list(layout["bbox"]), "pauli_frames": {f"region_{index}": macro.ref.pauli_frame for index, macro in enumerate(cell_macros)}, "factory": None}
-        if self.die_dims is not None:
-            stats["die_dims"] = {"width": self.die_dims[0], "rows_cap": self.die_dims[1], "rows": self.rows}
-        if injection_macros:
-            stats["factory"] = {"name": factory_spec.name, "dim_i": factory_spec.dim_i, "dim_j": factory_spec.dim_j, "interval_k": factory_spec.interval_k}
-            stats["t_count"] = layout["t_count"]
-            stats["wait_levels"] = layout["wait_levels"]
-            stats["compute_volume"] = layout["compute_volume"]
-            stats["injections"] = [
-                {
-                    "qubit": macro.qubits[0],
-                    "channel": macro.layer,
-                    "dagger": macro.ref[1],
-                    "readout": "X if s==0 else Y",
-                    "corrections": {f"{s}{r}": correction_for((s, r), macro.ref[1]) for s in (0, 1) for r in (0, 1)},
-                }
-                for macro in injection_macros
-            ]
-        return stats
+        from .physical import statistics
+        return statistics(self)
 
 
 def _normalized_placements(floorplan, layer_cells):
@@ -263,19 +249,17 @@ def _assert_hadamard_ledger(floorplan, placements, exit_bits):
                     raise RuntimeError(f"elaborate: hadamard ledger mismatch at layer {layer}, qubit {qubit}: wire delivers bit {arriving.get(qubit, 0)} but the cell was synthesized against in_bases {cell.in_bases.get(qubit, 0)} — flip landings and cell compensation have diverged")
 
 
-def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, factories=1):
-    """Fuse the floorplan, synthesized cells and injections into the Program IR.
-
-    :param floorplan: Floorplan.
-    :param layer_cells: list per layer of Cell (or a single Cell).
-    :param events: list[InjectionEvent].
-    :param channels: list[int] from synthesize, parallel to events.
-    :param factory: FactorySpec | None.
-    :param factories: int, factory units.
-    :returns: Program — cell/factory/injection macros, parity-colored inter-layer
-        nets (flip marks a Hadamard landing), channels, parking, sides and exit colors.
+def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, factories=1, factory_mode=None):
+    """Build a checked physical layout. Omitted mode uses in_place for F<=2,
+    otherwise backside_horizontal. Explicit choices override that policy.
     """
-    points = place_injections(events, channels, floorplan, factory=factory, factories=factories) if events else []
+    from .physical import compile_physical, resolve_mode
+    mode = resolve_mode(factory_mode, factories)
+    return compile_physical(floorplan, layer_cells, events, channels, factory, factories, mode)
+
+
+def _elaborate_cells(floorplan, layer_cells):
+    """Build the cell and pin scaffold before physical routing."""
     placements = _normalized_placements(floorplan, layer_cells)
     num_layers = len(placements)
     exit_bits = _parity_ledger(floorplan, placements)
@@ -285,10 +269,6 @@ def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, fact
     for layer in range(num_layers):
         for cell, (row, offset, box_qubits) in placements[layer]:
             macros.append(MacroInstance(kind="cell", ref=cell, layer=layer, row=row, offset=offset, qubits=tuple(box_qubits if box_qubits is not None else sorted(floorplan.out_port_columns[layer]))))
-    if factory is not None and points:
-        for point in points:
-            macros.append(MacroInstance(kind="injection", ref=("gadget", point.dagger), layer=point.channel, row=point.row, offset=point.column, qubits=(point.qubit,), round=point.round, slot=point.slot, level=point.level))
-
     nets = []
     for channel in range(num_layers - 1):
         before = _slots(floorplan, channel, use_out=True)
@@ -323,4 +303,4 @@ def elaborate(floorplan, layer_cells, events=(), channels=(), factory=None, fact
     side_entries = floorplan.side_entries if floorplan.side_entries else [{} for _ in range(num_layers)]
     sides = [[{qubit: (move.lane_column, move.slot, move.plane) for qubit, move in side_exits[layer].items()}, {qubit: (move.lane_column, move.slot, move.plane) for qubit, move in side_entries[layer].items()}] for layer in range(num_layers)]
 
-    return Program(die_dims=floorplan.die_dims, rows=floorplan.rows, macros=macros, nets=nets, channels=channels, num_qubits=floorplan.num_qubits, magic_column=floorplan.magic_column, magic_sides=floorplan.magic_sides, box_widths=list(floorplan.box_widths), parking=parking, sides=sides, exit_colors=dict(exit_bits[-1]) if exit_bits else {}, factory=factory if points else None, factories=factories if factory is not None and points else 0)
+    return Program(die_dims=floorplan.die_dims, rows=floorplan.rows, macros=macros, nets=nets, channels=channels, num_qubits=floorplan.num_qubits, magic_column=floorplan.magic_column, magic_sides=floorplan.magic_sides, box_widths=list(floorplan.box_widths), parking=parking, sides=sides, exit_colors=dict(exit_bits[-1]) if exit_bits else {})

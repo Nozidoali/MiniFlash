@@ -13,7 +13,7 @@ from pathlib import Path
 import miniflash as flash
 
 
-def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=False, factory="15-to-1", die_dims=None, factories=1, budget_s=600, orientation=False, use_sat=False, fixed_columns=False):
+def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=False, factory="15-to-1", die_dims=None, factories=1, budget_s=600, orientation=False, use_sat=False, fixed_columns=False, factory_mode=None):
     """Compile a circuit to the Program IR: parse -> partition -> synthesize -> elaborate.
 
     Partitioning is coarse-first: regions start at whole-circuit granularity
@@ -23,16 +23,24 @@ def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=Fa
     :param qasm_path: str | Path to a .qasm file.
     :param cache_dir: str, LaSsynth disk cache directory.
     :param max_gates: int, floor of the per-region gate cap.
-    :param side_ports: bool, swap through cell side faces.
+    :param side_ports: must be False for the physical-layout backend.
     :param factory: str preset name or FactorySpec.
-    :param die_dims: (width, rows | None) or None for 1-D.
-    :param factories: int, magic state factory units.
+    :param die_dims: initial synthesis (width, rows | None), or None for 1-D;
+        the final physical rectangle may grow beyond these dimensions.
+    :param factories: positive int, reserved magic state factory units.
+    :param factory_mode: in_place, backside_vertical or backside_horizontal;
+        None selects in_place for factories <= 2, otherwise backside_horizontal.
     :param budget_s: int, processing budget in seconds per region.
     :param use_sat: bool, SAT-solve uncached regions; False (default) serves
         cache hits and templates everything else.
-    :param orientation: bool, lay deep cells down when that shortens their layer (1-D only).
+    :param orientation: must be False for the physical-layout backend.
+    :param fixed_columns: must be False for the physical-layout backend.
     :returns: Program.
     """
+    from miniflash.physical import resolve_mode
+    factory_mode = resolve_mode(factory_mode, factories)
+    if orientation or side_ports or fixed_columns:
+        raise ValueError("physical factory layouts require upright cells and ordinary ports (orientation/side_ports/fixed_columns=False)")
     circuit = flash.parse(qasm_path)
     top = min(circuit.num_qubits, 16)
     caps = [top] + [cap for cap in (12, 8, 6, 4, 2) if cap < top]
@@ -66,7 +74,7 @@ def compile(qasm_path, cache_dir=".miniflash-cache", max_gates=16, side_ports=Fa
             for sub in subs:
                 rung_of[id(sub)] = rung
 
-    return flash.elaborate(floorplan, cells, events=events, channels=channels, factory=factory_spec, factories=factories)
+    return flash.elaborate(floorplan, cells, events=events, channels=channels, factory=factory_spec, factories=factories, factory_mode=factory_mode)
 
 
 def main():
@@ -77,12 +85,13 @@ def main():
     parser = argparse.ArgumentParser(description="Compile a Clifford+T OpenQASM 2.0 circuit into a lattice-surgery layout (glTF 2.0)")
     parser.add_argument("qasm",                                              help="input .qasm file")
     parser.add_argument("-o", "--out",                                       help="write the glTF scene to this path (default: stats only, no glTF)")
+    parser.add_argument("--factory-mode", choices=("in_place", "backside_vertical", "backside_horizontal"), help="default: in_place for F<=2, otherwise backside_horizontal (4-row corridor)")
     parser.add_argument("--factory",     default="15-to-1",                  help=f"magic state factory: {' | '.join(sorted(flash.FACTORIES))} or custom IxJxK dims (e.g. 6x2x11)")
-    parser.add_argument("--die",         type=int, metavar="WIDTH",          help="die width constraint (rows grow on demand)")
-    parser.add_argument("--factories",   type=int, default=1,                help="factory units (die mode)")
+    parser.add_argument("--die",         type=int, metavar="WIDTH",          help="initial cell synthesis width (final physical rectangle may grow)")
+    parser.add_argument("--factories",   type=int, default=1,                help="reserved factory units (positive integer; default 1)")
     parser.add_argument("--sat",         nargs="?", type=int, const=600, metavar="SECONDS", help="SAT-solve uncached regions, per-region budget in seconds (default: cached cells + templates only)")
-    parser.add_argument("--side-ports",  action="store_true",                help="swap through cell side faces (1-D only)")
-    parser.add_argument("--orientation", action="store_true",                help="lay deep cells down (1-D only)")
+    parser.add_argument("--side-ports",  action="store_true",                help="unsupported by the physical-layout backend")
+    parser.add_argument("--orientation", action="store_true",                help="unsupported by the physical-layout backend")
     parser.add_argument("--cache-dir",   default=".miniflash-cache",         help="cell cache directory")
     parser.add_argument("--dump-ir",     action="store_true",                help="also write <name>.program.json")
     arguments = parser.parse_args()
@@ -95,6 +104,7 @@ def main():
             parser.error(f"--factory: {factory!r} is neither a preset ({', '.join(sorted(flash.FACTORIES))}) nor IxJxK dims")
     program = compile(
         arguments.qasm,
+        factory_mode=arguments.factory_mode,
         cache_dir=arguments.cache_dir,
         side_ports=arguments.side_ports,
         factory=factory,
@@ -118,7 +128,7 @@ def main():
         print(gltf_path)
     else:
         stats = program.stats()
-        line = f"miniflash: {Path(arguments.qasm).stem} cube_envelope={stats['cube_envelope']} volume={stats['volume']}"
+        line = f"miniflash: {Path(arguments.qasm).stem} factory_mode={stats['factory_mode']} cube_envelope={stats['cube_envelope']} volume={stats['volume']}"
         if stats.get("t_count") is not None:
             line += f" t_count={stats['t_count']} wait_levels={stats['wait_levels']}"
         print(line)

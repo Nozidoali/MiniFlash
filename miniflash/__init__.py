@@ -14,7 +14,8 @@ The public API mirrors the pipeline stages::
     circuit = flash.parse("circuit.qasm")
     pc = flash.partition(circuit)   # PartitionedCircuit: .regions / .events / .to_text() / .save_png()
     floorplan, cells, channels = flash.synthesize(pc)
-    program = flash.elaborate(floorplan, cells, events=pc.events, channels=channels)
+    program = flash.elaborate(floorplan, cells, events=pc.events, channels=channels,
+                              factory=flash.get_factory("15-to-1"), factories=6)
     stats = program.stats()                # check -> measure (or flash.build_layout(program))
     flash.write_gltf(program, "layout.gltf")
 
